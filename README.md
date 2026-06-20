@@ -28,7 +28,37 @@ python scripts/verify_environment.py --config configs/local_smoke.yaml
 python scripts/visualize_physics.py --config configs/local_smoke.yaml
 ```
 
+## Phase 3 preprocessing
+
+Inspect MATLAB contents before selecting arrays:
+
+```bash
+python scripts/inspect_mat.py /path/to/breast_train_speed.mat /path/to/breast_test_speed.mat
+```
+
+Build the restart-safe memory-mapped cache using explicit locations:
+
+```bash
+python scripts/prepare_cache.py \
+  --train-mat /path/to/breast_train_speed.mat \
+  --test-mat /path/to/breast_test_speed.mat \
+  --output-dir /path/to/cache_128 \
+  --image-size 128 --num-angles 64 --batch-size 32 --device cuda
+```
+
+If inspection finds multiple plausible arrays, pass `--train-key` and
+`--test-key`. If sample layout is ambiguous, also pass the corresponding
+`--train-sample-axis` or `--test-sample-axis`.
+
+Visualize one cached sample:
+
+```bash
+python -m heterowave.data.visualize \
+  --cache-dir /path/to/cache_128 \
+  --output outputs/cached_sample.png \
+  --split train --index 0
+```
+
 The local configuration is deliberately tiny and uses FP32, `num_workers: 0`,
 and `torch.compile: false`. It generates synthetic data in memory and performs
 no dataset download or preprocessing.
-
