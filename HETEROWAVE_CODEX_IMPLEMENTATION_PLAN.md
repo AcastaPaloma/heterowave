@@ -57,19 +57,26 @@ Never sacrifice the baselines and evaluation for a more exotic architecture.
 
 ```mermaid
 flowchart LR
-    X[Ground-truth speed map c(x)] --> S[Convert to slowness contrast]
-    S --> A[Parallel-beam forward projector]
-    A --> Y[Complete sinogram]
-    Y --> M[Random angular-sector mask]
-    M --> YO[Observed sinogram]
-    YO --> BP[Per-sector partial backprojection]
-    BP --> E[Shared sector encoder]
-    E --> AGG[Masked mean + variance aggregation at each scale]
-    AGG --> D[U-Net decoder]
-    D --> P[Predicted speed map]
-    D --> U[Predicted uncertainty]
-    P --> L1[Image and edge losses]
-    P --> DC[Observed-angle data-consistency loss]
+ X["Ground-truth speed map"] --> S["Convert to slowness contrast"]
+ S --> A["Forward projection"]
+ A --> Y["Complete sinogram"]
+ Y --> M["Mask acquisition sectors"]
+ M --> O["Observed sectors"]
+ O --> B1["Sector 1 backprojection"]
+ O --> B2["Sector 2 backprojection"]
+ O --> BN["Sector N backprojection"]
+ B1 --> E["Shared sector encoder"]
+ B2 --> E
+ BN --> E
+ E --> G["Masked mean and variance aggregation"]
+ G --> D["U-Net decoder"]
+ D --> P["Predicted speed map"]
+ D --> U["Predicted uncertainty"]
+ P --> LI["Image reconstruction loss"]
+ P --> LG["Gradient loss"]
+ P --> FP["Forward projection of prediction"]
+ FP --> LD["Observed-data consistency loss"]
+
 ```
 
 ## Mathematical formulation

@@ -1,13 +1,10 @@
-@"
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+.pytest_cache/
 .venv/
-.env
-data/
-outputs/
-checkpoints/
-*.pt
-*.pth
-*.ckpt
-.ipynb_checkpoints/
-"@ | Set-Content .gitignore
+.vscode/
+build/
+dist/
+outputs/*
+!outputs/.gitkeep

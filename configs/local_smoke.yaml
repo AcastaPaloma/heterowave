@@ -1,0 +1,22 @@
+seed: 1337
+device: cuda
+precision: fp32
+compile: false
+
+data:
+  dataset: synthetic
+  image_size: 32
+  batch_size: 2
+  num_workers: 0
+  train_samples: 16
+  val_samples: 8
+  preprocess: false
+
+physics:
+  num_angles: 16
+  detector_bins: 32
+  align_corners: false
+
+visualization:
+  output: outputs/physics_smoke.png
+

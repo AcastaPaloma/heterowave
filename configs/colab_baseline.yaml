@@ -1,0 +1,19 @@
+seed: 1337
+device: cuda
+precision: auto
+compile: false
+data:
+  dataset: synthetic
+  image_size: 128
+  batch_size: 8
+  num_workers: 2
+  train_samples: 1024
+  val_samples: 256
+  preprocess: false
+physics:
+  num_angles: 64
+  detector_bins: 128
+  align_corners: false
+visualization:
+  output: outputs/physics_colab.png
+
