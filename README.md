@@ -59,6 +59,30 @@ python -m heterowave.data.visualize \
   --split train --index 0
 ```
 
+## Phase 4 baselines
+
+After copying the cache to fast local storage, measure the complete-sinogram
+FBP baseline and train the fixed-input U-Net:
+
+```bash
+python -m heterowave.evaluate --config configs/colab_baseline.yaml --baseline fbp --split val
+python -m heterowave.train --config configs/colab_baseline.yaml
+python -m heterowave.evaluate --config configs/colab_baseline.yaml \
+  --baseline unet \
+  --checkpoint /content/drive/MyDrive/heterowave/results/fbp_unet_baseline/best.pt \
+  --split val
+```
+
+Resume an interrupted training runtime with:
+
+```bash
+python -m heterowave.train --config configs/colab_baseline.yaml \
+  --resume /content/drive/MyDrive/heterowave/results/fbp_unet_baseline/last.pt
+```
+
+Phase 4 uses all cached angles. Missing-sector scenarios and acquisition
+masking are introduced in Phase 5.
+
 The local configuration is deliberately tiny and uses FP32, `num_workers: 0`,
 and `torch.compile: false`. It generates synthetic data in memory and performs
 no dataset download or preprocessing.

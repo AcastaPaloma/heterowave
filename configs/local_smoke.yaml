@@ -20,3 +20,28 @@ physics:
 visualization:
   output: outputs/physics_smoke.png
 
+model:
+  name: fbp_unet
+  channels: [4, 8]
+  residual_output: true
+
+optimizer:
+  name: adamw
+  learning_rate: 0.001
+  weight_decay: 0.0001
+
+loss:
+  image_weight: 1.0
+  gradient_weight: 0.1
+
+training:
+  epochs: 20
+  max_steps: 20
+  gradient_clip: 1.0
+  validate_every_epochs: 1
+  checkpoint_metric: nrmse
+  checkpoint_mode: min
+  resume: null
+
+output:
+  root: outputs/local_smoke

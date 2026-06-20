@@ -9,6 +9,10 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from heterowave.physics import parallel_beam_project
+
+from .phantoms import make_random_phantoms, speed_to_slowness_contrast
+
 
 class CachedHeteroWaveDataset(Dataset[dict[str, torch.Tensor]]):
     """Read cached samples lazily without copying the complete arrays into RAM."""
@@ -33,3 +37,31 @@ class CachedHeteroWaveDataset(Dataset[dict[str, torch.Tensor]]):
         target = torch.from_numpy(np.array(self.targets[index], dtype=np.float32, copy=True)).unsqueeze(0)
         sinogram = torch.from_numpy(np.array(self.sinograms[index], dtype=np.float32, copy=True))
         return {"target": target, "sinogram": sinogram}
+
+
+class SyntheticReconstructionDataset(Dataset[dict[str, torch.Tensor]]):
+    """Tiny deterministic reconstruction dataset for local smoke tests."""
+
+    def __init__(self, count: int, image_size: int, num_angles: int, *, seed: int = 1337) -> None:
+        if min(count, image_size, num_angles) < 1:
+            raise ValueError("count, image_size, and num_angles must be positive")
+        speed = make_random_phantoms(count, image_size, seed=seed)
+        self.targets = (speed - 1500.0) / 50.0
+        self.sinograms = parallel_beam_project(
+            speed_to_slowness_contrast(speed), num_angles=num_angles, detector_bins=image_size
+        )
+        self.metadata = {
+            "image_size": image_size,
+            "num_angles": num_angles,
+            "detector_bins": image_size,
+            "align_corners": False,
+            "speed_mean": 1500.0,
+            "speed_std": 50.0,
+            "water_speed": 1500.0,
+        }
+
+    def __len__(self) -> int:
+        return len(self.targets)
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        return {"target": self.targets[index].clone(), "sinogram": self.sinograms[index].clone()}

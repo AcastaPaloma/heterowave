@@ -8,3 +8,5 @@ build/
 dist/
 outputs/*
 !outputs/.gitkeep
+
+cache_128/*

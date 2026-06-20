@@ -1,2 +1,5 @@
-"""Reserved model namespace for Phases 4–5."""
+"""Reconstruction model namespace."""
 
+from .unet_baseline import FBPUNet, ResidualBlock
+
+__all__ = ["FBPUNet", "ResidualBlock"]

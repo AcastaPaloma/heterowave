@@ -13,9 +13,12 @@ import yaml
 @dataclass
 class DataConfig:
     dataset: str = "synthetic"
+    root: str | None = None
     image_size: int = 32
     batch_size: int = 2
     num_workers: int = 0
+    pin_memory: bool = False
+    persistent_workers: bool = False
     train_samples: int = 16
     val_samples: int = 8
     preprocess: bool = False
@@ -34,6 +37,42 @@ class VisualizationConfig:
 
 
 @dataclass
+class ModelConfig:
+    name: str = "fbp_unet"
+    channels: list[int] = field(default_factory=lambda: [16, 32, 64, 96])
+    residual_output: bool = True
+
+
+@dataclass
+class OptimizerConfig:
+    name: str = "adamw"
+    learning_rate: float = 3e-4
+    weight_decay: float = 1e-4
+
+
+@dataclass
+class LossConfig:
+    image_weight: float = 1.0
+    gradient_weight: float = 0.1
+
+
+@dataclass
+class TrainingConfig:
+    epochs: int = 30
+    max_steps: int | None = None
+    gradient_clip: float = 1.0
+    validate_every_epochs: int = 1
+    checkpoint_metric: str = "nrmse"
+    checkpoint_mode: str = "min"
+    resume: str | None = None
+
+
+@dataclass
+class OutputConfig:
+    root: str = "outputs/baseline"
+
+
+@dataclass
 class ProjectConfig:
     seed: int = 1337
     device: str = "cuda"
@@ -42,18 +81,45 @@ class ProjectConfig:
     data: DataConfig = field(default_factory=DataConfig)
     physics: PhysicsConfig = field(default_factory=PhysicsConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    loss: LossConfig = field(default_factory=LossConfig)
+    training: TrainingConfig = field(default_factory=TrainingConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
 
     def validate(self) -> None:
         if self.precision not in {"fp32", "fp16", "bf16", "auto"}:
             raise ValueError(f"Unsupported precision: {self.precision}")
-        if self.data.dataset != "synthetic":
-            raise ValueError("Phase 1-2 supports only dataset='synthetic'")
+        if self.data.dataset not in {"synthetic", "cached"}:
+            raise ValueError("dataset must be 'synthetic' or 'cached'")
+        if self.data.dataset == "cached" and not self.data.root:
+            raise ValueError("data.root is required for dataset='cached'")
         if self.data.image_size < 8 or self.physics.num_angles < 1:
             raise ValueError("image_size must be >= 8 and num_angles must be positive")
+        if self.data.batch_size < 1 or self.data.train_samples < 1 or self.data.val_samples < 1:
+            raise ValueError("batch size and synthetic split sizes must be positive")
+        if self.physics.detector_bins is not None and self.physics.detector_bins < 2:
+            raise ValueError("detector_bins must be at least two when provided")
         if self.data.num_workers < 0:
             raise ValueError("num_workers must be nonnegative")
+        if self.data.persistent_workers and self.data.num_workers == 0:
+            raise ValueError("persistent_workers requires num_workers > 0")
         if self.data.preprocess:
-            raise ValueError("Dataset preprocessing is outside the Phase 1-2 scope")
+            raise ValueError("Preprocessing must be run explicitly before training")
+        if self.model.name != "fbp_unet" or len(self.model.channels) < 2:
+            raise ValueError("Phase 4 supports model.name='fbp_unet' with at least two channel levels")
+        if any(channel < 1 for channel in self.model.channels):
+            raise ValueError("model channels must be positive")
+        if self.optimizer.name != "adamw" or self.optimizer.learning_rate <= 0 or self.optimizer.weight_decay < 0:
+            raise ValueError("Phase 4 supports AdamW with a positive learning rate")
+        if min(self.loss.image_weight, self.loss.gradient_weight) < 0:
+            raise ValueError("loss weights must be nonnegative")
+        if self.training.epochs < 1 or self.training.validate_every_epochs < 1:
+            raise ValueError("training epochs and validation interval must be positive")
+        if self.training.max_steps is not None and self.training.max_steps < 1:
+            raise ValueError("training.max_steps must be positive when provided")
+        if self.training.checkpoint_metric != "nrmse" or self.training.checkpoint_mode != "min":
+            raise ValueError("Phase 4 checkpoints use minimum validation NRMSE")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -114,4 +180,3 @@ def load_config(path: str | Path, overrides: list[str] | None = None) -> Project
     config = _construct(ProjectConfig, values)
     config.validate()
     return config
-

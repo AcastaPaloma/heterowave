@@ -2,18 +2,49 @@ seed: 1337
 device: cuda
 precision: auto
 compile: false
+
 data:
-  dataset: synthetic
+  dataset: cached
+  root: /content/heterowave_data/cache_128
   image_size: 128
   batch_size: 8
   num_workers: 2
-  train_samples: 1024
-  val_samples: 256
+  pin_memory: true
+  persistent_workers: true
+  train_samples: 16
+  val_samples: 8
   preprocess: false
+
 physics:
   num_angles: 64
   detector_bins: 128
   align_corners: false
+
 visualization:
   output: outputs/physics_colab.png
 
+model:
+  name: fbp_unet
+  channels: [16, 32, 64, 96]
+  residual_output: true
+
+optimizer:
+  name: adamw
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+
+loss:
+  image_weight: 1.0
+  gradient_weight: 0.1
+
+training:
+  epochs: 30
+  max_steps: null
+  gradient_clip: 1.0
+  validate_every_epochs: 1
+  checkpoint_metric: nrmse
+  checkpoint_mode: min
+  resume: null
+
+output:
+  root: /content/drive/MyDrive/heterowave/results/fbp_unet_baseline
