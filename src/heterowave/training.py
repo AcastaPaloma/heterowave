@@ -17,11 +17,16 @@ from .metrics import ReconstructionMetricAccumulator
 def resolve_device(requested: str) -> torch.device:
     if requested != "cuda":
         return torch.device(requested)
-    if torch.cuda.is_available():
-        major, minor = torch.cuda.get_device_capability(0)
-        if f"sm_{major}{minor}" in torch.cuda.get_arch_list():
-            return torch.device("cuda")
-    print("warning=CUDA requested but unavailable for this PyTorch build; using CPU")
+    if not torch.cuda.is_available():
+        print("warning=CUDA requested but torch.cuda.is_available() is false; using CPU")
+        return torch.device("cpu")
+    try:
+        probe = torch.ones(1, device="cuda")
+        probe.add_(1.0)
+        torch.cuda.synchronize()
+        return torch.device("cuda")
+    except (RuntimeError, AssertionError) as error:
+        print(f"warning=CUDA execution probe failed ({error}); using CPU")
     return torch.device("cpu")
 
 

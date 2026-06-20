@@ -22,13 +22,19 @@ def main(argv: list[str] | None = None) -> Path:
     args = parser.parse_args(argv)
     config = load_config(args.config, args.overrides)
     requested = config.device
-    cuda_usable = False
     if requested == "cuda" and torch.cuda.is_available():
-        capability = torch.cuda.get_device_capability(0)
-        cuda_usable = f"sm_{capability[0]}{capability[1]}" in torch.cuda.get_arch_list()
-    device = torch.device("cuda" if cuda_usable else "cpu")
-    if requested == "cuda" and not cuda_usable:
-        print("warning=CUDA requested but the installed PyTorch wheel cannot execute on this GPU; using CPU")
+        try:
+            probe = torch.ones(1, device="cuda")
+            probe.add_(1.0)
+            torch.cuda.synchronize()
+            device = torch.device("cuda")
+        except (RuntimeError, AssertionError) as error:
+            print(f"warning=CUDA execution probe failed ({error}); using CPU")
+            device = torch.device("cpu")
+    else:
+        device = torch.device(requested if requested != "cuda" else "cpu")
+        if requested == "cuda":
+            print("warning=CUDA requested but torch.cuda.is_available() is false; using CPU")
     size = config.data.image_size
     speed = render_phantom(size, [
         PhantomRegion("circle", (0.0, 0.0), (0.48, 0.48), 1540.0),

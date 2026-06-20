@@ -4,6 +4,7 @@ from heterowave.baselines import fbp_normalized_speed, fbp_unet_features
 from heterowave.data import SyntheticReconstructionDataset
 from heterowave.losses import reconstruction_loss
 from heterowave.models import FBPUNet
+from heterowave.training import resolve_device
 
 
 def _batch(count=4, size=16, angles=8):
@@ -57,3 +58,16 @@ def test_tiny_unet_overfits_eight_examples():
     with torch.no_grad():
         final, _ = reconstruction_loss(model(features), target)
     assert final < initial * 0.35
+
+
+def test_resolve_device_uses_available_cuda_without_arch_list_filter(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
+    real_ones = torch.ones
+
+    def fake_ones(*args, **kwargs):
+        kwargs.pop("device", None)
+        return real_ones(*args, **kwargs)
+
+    monkeypatch.setattr(torch, "ones", fake_ones)
+    assert resolve_device("cuda").type == "cuda"
