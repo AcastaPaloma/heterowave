@@ -18,8 +18,8 @@ def main() -> None:
     parser.add_argument("--config", default="configs/local_smoke.yaml")
     args = parser.parse_args()
     config = load_config(args.config)
-    if sys.version_info[:2] != (3, 11):
-        raise RuntimeError(f"Python 3.11 is required; found {platform.python_version()}")
+    if sys.version_info[:2] not in ((3, 11), (3, 12)):
+        raise RuntimeError(f"Python 3.11 or 3.12 is required; found {platform.python_version()}")
     if config.precision != "fp32" or config.compile or config.data.num_workers != 0:
         raise RuntimeError("Local config must use FP32, compile=false, and num_workers=0")
     if config.data.preprocess or config.data.dataset != "synthetic":
