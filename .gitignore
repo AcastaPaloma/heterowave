@@ -1,0 +1,13 @@
+@"
+__pycache__/
+*.pyc
+.venv/
+.env
+data/
+outputs/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+.ipynb_checkpoints/
+"@ | Set-Content .gitignore
