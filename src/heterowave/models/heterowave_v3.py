@@ -71,7 +71,13 @@ class MaskGeometryEncoder(nn.Module):
 
 
 class MaskedSectorAttention(nn.Module):
-    """Permutation-invariant sector fusion with learned spatial precision maps."""
+    """Permutation-invariant sector fusion with gated attention weights.
+
+    This branch tests the simplest learned replacement for equal HeMIS-style
+    averaging: a gated-attention MIL score per sector and pixel. Mean/variance
+    style statistics are still retained as decoder features, but the fused
+    value is no longer an equal or softplus-precision average.
+    """
 
     def __init__(
         self,
@@ -83,12 +89,9 @@ class MaskedSectorAttention(nn.Module):
         super().__init__()
         hidden = max(channels // 4, 1)
         self.include_statistics = include_statistics
-        self.min_precision = 1e-4
-        self.precision = nn.Sequential(
-            nn.Conv2d(channels, hidden, 1),
-            nn.GELU(),
-            nn.Conv2d(hidden, 1, 1),
-        )
+        self.value_gate = nn.Conv2d(channels, hidden, 1)
+        self.filter_gate = nn.Conv2d(channels, hidden, 1)
+        self.attention_score = nn.Conv2d(hidden, 1, 1)
         self.value = nn.Conv2d(channels, channels, 1)
         extra_channels = channels + 3 if include_statistics else 0
         self.reduce = nn.Conv2d(channels + extra_channels, channels, 1)
@@ -99,24 +102,21 @@ class MaskedSectorAttention(nn.Module):
         mask = validate_sector_mask(mask, num_sectors=features.shape[1]).to(features.device)
         batch, sectors, channels, height, width = features.shape
         flat = features.reshape(batch * sectors, channels, height, width)
-        logits = self.precision(flat).reshape(batch, sectors, 1, height, width)
-        precision = F.softplus(logits) + self.min_precision
-        precision = precision * mask.view(batch, sectors, 1, 1, 1).to(precision)
-        total_precision = precision.sum(dim=1).clamp_min(self.min_precision)
-        weights = precision / total_precision.unsqueeze(1)
+        gated = torch.tanh(self.value_gate(flat)) * torch.sigmoid(self.filter_gate(flat))
+        logits = self.attention_score(gated).reshape(batch, sectors, 1, height, width)
+        logits = logits.masked_fill(~mask.view(batch, sectors, 1, 1, 1), torch.finfo(logits.dtype).min)
+        weights = torch.softmax(logits, dim=1)
         values = self.value(flat).reshape(batch, sectors, channels, height, width)
         attended = (weights * values).sum(dim=1)
         if self.include_statistics:
             variance = (weights * (values - attended.unsqueeze(1)).square()).sum(dim=1)
-            effective_count = total_precision.square() / precision.square().sum(dim=1).clamp_min(
-                self.min_precision
-            )
+            effective_count = 1.0 / weights.square().sum(dim=1).clamp_min(1e-6)
             effective_count = (effective_count / float(sectors)).clamp(0.0, 1.0)
             observed_fraction = (
                 mask.to(attended).mean(dim=1).view(batch, 1, 1, 1).expand(-1, 1, height, width)
             )
-            log_precision = torch.log1p(total_precision)
-            attended = torch.cat((attended, variance, effective_count, observed_fraction, log_precision), dim=1)
+            concentration = weights.max(dim=1).values
+            attended = torch.cat((attended, variance, effective_count, observed_fraction, concentration), dim=1)
         return self.reduce(attended)
 
 

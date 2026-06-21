@@ -931,3 +931,32 @@ breadcrumbs when explaining design decisions.
 - A future "v4" should probably be dual-domain or unrolled, not just more
   attention.
 - Keep this file current.
+
+## Branch experiment: gated sector pooling
+
+Branch: `experiment/gated-sector-pooling`.
+
+Status: implemented as a trainable branch, not yet benchmarked.
+
+Purpose:
+
+- test a low-risk learned replacement for equal HeMIS mean/variance fusion;
+- use gated-attention/MIL-style sector weights while retaining variance,
+  effective-count, observed-fraction, and attention-concentration statistics;
+- keep the v2/v3 masked-FBP trunk and zero-gated multiscale fusion.
+
+Colab train command:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_heterowave_gated_pooling.yaml \
+  --initialize-from /content/drive/MyDrive/heterowave/results/heterowave_v2_fusion/best.pt
+```
+
+Local smoke:
+
+```bash
+python -m heterowave.train \
+  --config configs/local_heterowave_gated_pooling_smoke.yaml \
+  device=cpu
+```
