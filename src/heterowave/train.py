@@ -10,6 +10,7 @@ from pathlib import Path
 
 import torch
 
+from .acquisition import augment_sinogram
 from .config import load_config
 from .losses import observed_data_consistency_loss, reconstruction_loss
 from .training import build_model, create_loaders, resolve_device, training_prediction, validate
@@ -75,6 +76,7 @@ def main(argv: list[str] | None = None) -> Path:
 
     mask_generator = torch.Generator().manual_seed(config.seed)
     physics_generator = torch.Generator().manual_seed(config.seed + 2)
+    acquisition_generator = torch.Generator().manual_seed(config.seed + 3)
     start_epoch, global_step, best_nrmse = 0, 0, float("inf")
     resume_path = args.resume or config.training.resume
     if resume_path:
@@ -88,6 +90,8 @@ def main(argv: list[str] | None = None) -> Path:
             mask_generator.set_state(checkpoint["mask_generator_state"])
         if "physics_generator_state" in checkpoint:
             physics_generator.set_state(checkpoint["physics_generator_state"])
+        if "acquisition_generator_state" in checkpoint:
+            acquisition_generator.set_state(checkpoint["acquisition_generator_state"])
         print(f"resumed={resume_path} step={global_step}")
 
     use_fp16 = device.type == "cuda" and config.precision in {"fp16", "auto"} and not torch.cuda.is_bf16_supported()
@@ -100,10 +104,11 @@ def main(argv: list[str] | None = None) -> Path:
         for batch in train_loader:
             target = batch["target"].to(device, non_blocking=True)
             sinogram = batch["sinogram"].to(device, non_blocking=True)
+            input_sinogram = augment_sinogram(sinogram, config.acquisition, generator=acquisition_generator)
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_fp16 or use_bf16):
                 raw_output, sector_mask = training_prediction(
-                    model, sinogram, metadata, config, mask_generator, return_aux=True
+                    model, input_sinogram, metadata, config, mask_generator, return_aux=True
                 )
                 if isinstance(raw_output, dict):
                     prediction = raw_output["mean"]
@@ -125,7 +130,7 @@ def main(argv: list[str] | None = None) -> Path:
                 if compute_data_loss:
                     data_loss = observed_data_consistency_loss(
                         prediction,
-                        sinogram,
+                        input_sinogram,
                         sector_mask,
                         metadata,
                         angle_fraction=config.loss.data_angle_fraction,
@@ -168,6 +173,7 @@ def main(argv: list[str] | None = None) -> Path:
                 "config": asdict(config),
                 "mask_generator_state": mask_generator.get_state(),
                 "physics_generator_state": physics_generator.get_state(),
+                "acquisition_generator_state": acquisition_generator.get_state(),
             }
             _atomic_checkpoint(output / "last.pt", state)
             if values["nrmse"] < best_nrmse:

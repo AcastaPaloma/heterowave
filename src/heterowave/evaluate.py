@@ -104,7 +104,11 @@ def main(argv: list[str] | None = None):
     output = Path(args.output_dir or config.output.root)
     output.mkdir(parents=True, exist_ok=True)
     heterowave, heterowave_config, heterowave_provenance = load_trained_model(args.heterowave_checkpoint, device)
-    heterowave_kind = "heterowave_v2" if heterowave_config.model.name == "heterowave_v2" else "heterowave"
+    heterowave_kind = (
+        heterowave_config.model.name
+        if heterowave_config.model.name in {"heterowave_v2", "heterowave_v3"}
+        else "heterowave"
+    )
     heterowave_label = f"{heterowave_config.model.name}_{heterowave_config.model.aggregation}"
     models = [("fbp", "fbp", None)]
     checkpoint_provenance = []

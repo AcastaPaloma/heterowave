@@ -19,7 +19,9 @@ from .data import (
     sector_mask_to_angle_mask,
 )
 from .metrics import ReconstructionMetricAccumulator, UncertaintyMetricAccumulator
-from .models import FBPUNet, HeteroWave, HeteroWaveV2
+from .models import FBPUNet, HeteroWave, HeteroWaveV2, HeteroWaveV3
+
+FEATURE_FBP_MODELS = {"masked_fbp_unet", "heterowave_v2", "heterowave_v3"}
 
 
 def resolve_device(requested: str) -> torch.device:
@@ -100,6 +102,31 @@ def build_model(config: ProjectConfig) -> nn.Module:
                 for parameter in module.parameters():
                     parameter.requires_grad_(False)
         return model
+    if config.model.name == "heterowave_v3":
+        model = HeteroWaveV3(
+            image_size=config.data.image_size,
+            num_angles=config.physics.num_angles,
+            num_sectors=config.physics.num_sectors,
+            channels=config.model.channels,
+            aggregation=config.model.aggregation,
+            geometry_channels=config.model.geometry_channels,
+            residual_output=config.model.residual_output,
+            uncertainty=config.model.uncertainty,
+            sector_fusion=config.model.sector_fusion,
+            attention_fusion=config.model.attention_fusion,
+            sector_statistics=config.model.sector_statistics,
+            angle_fourier_bands=config.model.angle_fourier_bands,
+            mask_film=config.model.mask_film,
+            mask_fourier_bands=config.model.mask_fourier_bands,
+            mask_embedding_dim=config.model.mask_embedding_dim,
+            fusion_gate_init=config.model.fusion_gate_init,
+            align_corners=config.physics.align_corners,
+        )
+        if config.model.freeze_global_trunk:
+            for module in (model.encoders, model.decoders, model.output):
+                for parameter in module.parameters():
+                    parameter.requires_grad_(False)
+        return model
     return HeteroWave(
         image_size=config.data.image_size,
         num_angles=config.physics.num_angles,
@@ -144,7 +171,7 @@ def training_prediction(
             features = fbp_unet_features(sinogram.float(), metadata, angle_mask=angle_mask)
         output = model(features)
         return (output, sector_mask) if return_aux else output
-    if config.model.name == "heterowave_v2":
+    if config.model.name in {"heterowave_v2", "heterowave_v3"}:
         angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1])
         with torch.no_grad(), torch.autocast(device_type=sinogram.device.type, enabled=False):
             features = fbp_unet_features(sinogram.float(), metadata, angle_mask=angle_mask)
@@ -189,7 +216,7 @@ def validate(
             sector_mask = torch.stack(
                 [fixed_masks[(sample_offset + index) % len(fixed_masks)] for index in range(len(sinogram))]
             ).to(device)
-            if config.model.name in {"masked_fbp_unet", "heterowave_v2"}:
+            if config.model.name in FEATURE_FBP_MODELS:
                 angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1])
                 features = fbp_unet_features(sinogram, metadata, angle_mask=angle_mask)
                 if config.model.name == "masked_fbp_unet":

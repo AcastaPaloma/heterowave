@@ -2,8 +2,9 @@
 
 HeteroWave is a research prototype for sparse-view speed-of-sound reconstruction
 from breast ultrasound tomography style data. The current branch,
-`heterowave-v2`, evaluates whether sector-aware reconstruction features improve
-over a strong mask-aware FBP U-Net baseline.
+`heterowave-v3`, builds on the measured v2 result with reliability-weighted
+sector fusion, mask-geometry conditioning, and optional acquisition-robustness
+training.
 
 The physics module uses a differentiable straight-ray parallel-beam Radon
 approximation implemented in pure PyTorch. It is not a full-wave acoustic
@@ -11,17 +12,23 @@ propagation simulator.
 
 ## Current status
 
-The strongest model in this repository is HeteroWave v2. It starts from the
-trained masked FBP U-Net baseline and adds a gated, permutation-invariant sector
-fusion branch. The initial v2 prediction is exactly the masked U-Net prediction
-when loaded from the masked U-Net checkpoint; any improvement is therefore
-attributable to the learned sector branch.
+The strongest measured model in this repository is HeteroWave v2. It starts
+from the trained masked FBP U-Net baseline and adds a gated,
+permutation-invariant sector fusion branch. The initial v2 prediction is
+exactly the masked U-Net prediction when loaded from the masked U-Net
+checkpoint; any improvement is therefore attributable to the learned sector
+branch.
 
 On validation, HeteroWave v2 improves over the masked FBP U-Net on all tested
 missing-view scenarios. On the held-out test split, v2 is approximately tied
 with a small positive average improvement. The gain is consistent on random
 sector masks and full/near-full observations, while contiguous missing wedges
 remain the main failure case.
+
+HeteroWave v3 is implemented on this branch but not yet benchmarked on the full
+cached dataset. Its design specifically targets v2's weakest cases:
+contiguous missing wedges, unequal sector reliability, and realistic
+projection-space acquisition perturbations.
 
 ## Implemented components
 
@@ -41,6 +48,9 @@ remain the main failure case.
 - HeteroWave v1 sector aggregation model.
 - Phase 7 observed-angle data consistency and heteroscedastic uncertainty.
 - HeteroWave v2 gated sector-fusion model.
+- HeteroWave v3 precision/reliability-weighted sector fusion.
+- Optional mask-geometry FiLM conditioning for wedge-aware decoding.
+- Optional projection-space acquisition perturbations for robustness training.
 - Deterministic validation/test evaluation suite with scenario-level metrics,
   plots, qualitative grids, config snapshots, and checkpoint provenance.
 - Synthetic MATLAB fixture tests, training/evaluation smoke tests, and
@@ -111,8 +121,8 @@ Representative test-set measurements:
 | Masked FBP U-Net | about 1.2 ms/sample | about 103 MB |
 | HeteroWave v2 | about 5.7 ms/sample | about 251 MB |
 
-The current v2 branch prioritizes controlled research attribution over
-deployment efficiency.
+The v2 experiment prioritizes controlled research attribution over deployment
+efficiency.
 
 ## Problem formulation
 
@@ -205,6 +215,33 @@ gap.
 HeteroWave v2 keeps the winning masked FBP U-Net trunk and adds a controlled
 sector-fusion path. The design goal is to test whether sector-aware features
 add measurable information beyond the masked FBP input.
+
+### HeteroWave v3
+
+HeteroWave v3 keeps the same warm-startable masked FBP U-Net trunk but replaces
+equal sector statistics with learned precision-weighted aggregation. Each
+observed sector predicts a positive reliability map; the model then forms
+weighted mean, weighted variance, effective-count, observed-fraction, and
+precision-summary features at every encoder scale.
+
+V3 also adds a small mask-geometry encoder. The decoder receives zero-initialized
+FiLM conditioning from the 16-sector mask and its low-order angular Fourier
+coefficients. This lets the model learn different corrections for random
+dropout versus contiguous missing wedges while preserving the same initial
+prediction as the masked U-Net.
+
+The optional acquisition robustness layer perturbs sinograms in projection
+space during training:
+
+- projection gain drift;
+- projection bias / delay-baseline drift;
+- low-level measurement noise;
+- fractional detector-axis shifts as a motion or timing surrogate.
+
+This is deliberately not described as "water noise." In water-coupled
+ultrasound tomography, water is the coupling medium. The defensible robustness
+claim is calibration, timing, motion, and channel variation around a
+water-coupled scanner.
 
 ## HeteroWave v2 architecture
 
@@ -487,6 +524,32 @@ python -m heterowave.train \
   --resume /content/drive/MyDrive/heterowave/results/heterowave_v2_fusion/last.pt
 ```
 
+### Train HeteroWave v3
+
+Clean architecture run:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_heterowave_v3.yaml \
+  --initialize-from /content/drive/MyDrive/heterowave/results/masked_fbp_unet/best.pt
+```
+
+Resume:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_heterowave_v3.yaml \
+  --resume /content/drive/MyDrive/heterowave/results/heterowave_v3_precision/last.pt
+```
+
+Optional robustness run after the clean v3 run:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_heterowave_v3_robust.yaml \
+  --initialize-from /content/drive/MyDrive/heterowave/results/heterowave_v3_precision/best.pt
+```
+
 ### Evaluate validation
 
 ```bash
@@ -497,6 +560,19 @@ python -m heterowave.evaluate \
   --masked-unet-checkpoint /content/drive/MyDrive/heterowave/results/masked_fbp_unet/best.pt \
   --heterowave-checkpoint /content/drive/MyDrive/heterowave/results/heterowave_v2_fusion/best.pt \
   --output-dir /content/drive/MyDrive/heterowave/results/heterowave_v2_validation
+```
+
+For v3, use the same evaluation command but switch the config, checkpoint, and
+output directory:
+
+```bash
+python -m heterowave.evaluate \
+  --config configs/colab_heterowave_v3.yaml \
+  --suite \
+  --unet-checkpoint /content/drive/MyDrive/heterowave/results/fbp_unet_baseline/best.pt \
+  --masked-unet-checkpoint /content/drive/MyDrive/heterowave/results/masked_fbp_unet/best.pt \
+  --heterowave-checkpoint /content/drive/MyDrive/heterowave/results/heterowave_v3_precision/best.pt \
+  --output-dir /content/drive/MyDrive/heterowave/results/heterowave_v3_validation
 ```
 
 ### Evaluate held-out test
@@ -535,6 +611,9 @@ Expected result directories:
 /content/drive/MyDrive/heterowave/results/heterowave_v2_fusion
 /content/drive/MyDrive/heterowave/results/heterowave_v2_validation
 /content/drive/MyDrive/heterowave/results/heterowave_v2_test
+/content/drive/MyDrive/heterowave/results/heterowave_v3_precision
+/content/drive/MyDrive/heterowave/results/heterowave_v3_robust
+/content/drive/MyDrive/heterowave/results/heterowave_v3_validation
 ```
 
 For training continuation, use `last.pt`. For model selection and evaluation,
@@ -545,6 +624,8 @@ use `best.pt`.
 - The forward model is straight-ray parallel-beam tomography, not full-wave
   ultrasound.
 - V2's held-out test improvement over masked FBP U-Net is small.
+- V3 is implemented but still needs full cached-dataset training and
+  validation/test benchmarking.
 - V2 is slower and uses more memory than the masked U-Net baseline.
 - Contiguous missing-wedge scenarios remain the weakest setting for v2.
 - Current evaluation reports aggregate image metrics; local structure-specific
@@ -552,16 +633,18 @@ use `best.pt`.
 
 ## Recommended next experiments
 
-1. Unfreeze the global trunk after the sector gates have warmed up.
-2. Add observed-angle data consistency to v2 after the fusion branch has proven
-   stable.
-3. Increase wedge-focused training probability or add a wedge-specific
-   validation checkpoint criterion.
-4. Evaluate whether a stronger sector-context module helps contiguous missing
-   wedges.
+1. Train clean HeteroWave v3 from the masked FBP U-Net checkpoint and compare
+   against the existing masked U-Net and v2 checkpoints.
+2. Evaluate v3 per scenario, especially contiguous missing wedges.
+3. Run the optional robustness fine-tuning config only after the clean v3
+   comparison is established.
+4. Add explicit corrupted-validation scenarios before making acquisition
+   robustness claims.
 5. Add region-specific metrics around high-gradient tissue boundaries and
    lesion-like structures instead of relying only on whole-image averages.
 
-The present branch establishes that sector-aware features can be added to a
-strong masked FBP U-Net without degrading the baseline and with small positive
-average validation/test gains.
+The v2 result establishes that sector-aware features can be added to a strong
+masked FBP U-Net without degrading the baseline and with small positive average
+validation/test gains. The v3 branch tests whether learned sector reliability
+and mask-shape conditioning can turn that controlled result into a larger,
+scenario-specific improvement.

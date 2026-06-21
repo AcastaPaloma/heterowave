@@ -26,7 +26,7 @@ from .metrics import ReconstructionMetricAccumulator, UncertaintyMetricAccumulat
 from .physics import parallel_beam_project
 from .training import build_model
 
-ModelKind = Literal["fbp", "unet", "heterowave", "heterowave_v2"]
+ModelKind = Literal["fbp", "unet", "heterowave", "heterowave_v2", "heterowave_v3"]
 
 
 def file_sha256(path: str | Path) -> str:
@@ -71,7 +71,7 @@ def predict_with_mask(
         raise ValueError(f"A trained model is required for {kind}")
     if kind == "unet":
         return model(fbp_unet_features(sinogram, metadata, angle_mask=angle_mask))
-    if kind == "heterowave_v2":
+    if kind in {"heterowave_v2", "heterowave_v3"}:
         features = fbp_unet_features(sinogram, metadata, angle_mask=angle_mask)
         output = model(sinogram, sector_mask, features)
     else:
@@ -308,11 +308,16 @@ def plot_architecture(config: ProjectConfig, path: str | Path) -> Path:
     axis.set_xlim(0, 1)
     axis.set_ylim(0, 1)
     axis.axis("off")
+    aggregation = (
+        "Sector reliability\nattention + statistics"
+        if config.model.name == "heterowave_v3" and config.model.attention_fusion
+        else f"Masked {config.model.aggregation}\nat every scale"
+    )
     labels = [
         "Masked\nsinogram",
         f"{config.physics.num_sectors} sector\nbackprojections",
         "Shared encoder\n" + " → ".join(map(str, config.model.channels)),
-        f"Masked {config.model.aggregation}\nat every scale",
+        aggregation,
         "U-Net decoder",
         "Normalized\nspeed map",
     ]
