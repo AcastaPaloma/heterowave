@@ -21,6 +21,11 @@ def _atomic_checkpoint(path: Path, value: dict) -> None:
     os.replace(temporary, path)
 
 
+def _load_checkpoint(path: str | Path) -> dict:
+    """Load training checkpoints without moving CPU RNG states onto CUDA."""
+    return torch.load(path, map_location="cpu", weights_only=False)
+
+
 def main(argv: list[str] | None = None) -> Path:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/local_smoke.yaml")
@@ -39,7 +44,7 @@ def main(argv: list[str] | None = None) -> Path:
     if args.resume and args.initialize_from:
         parser.error("--resume and --initialize-from are mutually exclusive")
     if args.initialize_from:
-        checkpoint = torch.load(args.initialize_from, map_location=device, weights_only=False)
+        checkpoint = _load_checkpoint(args.initialize_from)
         source = checkpoint["model"]
         target = model.state_dict()
         loaded, adapted, skipped = [], [], []
@@ -73,7 +78,7 @@ def main(argv: list[str] | None = None) -> Path:
     start_epoch, global_step, best_nrmse = 0, 0, float("inf")
     resume_path = args.resume or config.training.resume
     if resume_path:
-        checkpoint = torch.load(resume_path, map_location=device, weights_only=False)
+        checkpoint = _load_checkpoint(resume_path)
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         start_epoch = int(checkpoint["epoch"]) + 1
