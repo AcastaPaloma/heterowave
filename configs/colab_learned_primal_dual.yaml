@@ -1,0 +1,74 @@
+seed: 1337
+device: cuda
+precision: auto
+compile: false
+
+data:
+  dataset: cached
+  root: /content/heterowave_data/cache_128
+  image_size: 128
+  batch_size: 2
+  num_workers: 2
+  pin_memory: true
+  persistent_workers: true
+  train_samples: 16
+  val_samples: 8
+  preprocess: false
+
+physics:
+  num_angles: 64
+  detector_bins: 128
+  num_sectors: 16
+  align_corners: false
+
+visualization:
+  output: outputs/learned_primal_dual_colab.png
+
+model:
+  name: learned_primal_dual
+  channels: [16, 32, 64, 96]
+  residual_output: true
+  aggregation: mean_var_count
+  geometry_channels: true
+  uncertainty: false
+  primal_dual_iterations: 3
+  primal_dual_hidden_channels: 16
+
+acquisition:
+  enabled: false
+  noise_std: 0.0
+  gain_std: 0.0
+  bias_std: 0.0
+  detector_shift_std: 0.0
+
+masking:
+  minimum_sectors: 2
+  random_probability: 0.50
+  wedge_probability: 0.35
+  periodic_probability: 0.15
+  validation_masks: configs/validation_masks_seed1337.json
+
+optimizer:
+  name: adamw
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+
+loss:
+  image_weight: 1.0
+  gradient_weight: 0.1
+  data_weight: 0.0
+  data_every_n_steps: 4
+  data_angle_fraction: 0.5
+  uncertainty_weight: 0.0
+
+training:
+  epochs: 40
+  max_steps: null
+  gradient_clip: 1.0
+  validate_every_epochs: 1
+  checkpoint_metric: nrmse
+  checkpoint_mode: min
+  resume: null
+
+output:
+  root: /content/drive/MyDrive/heterowave/results/learned_primal_dual

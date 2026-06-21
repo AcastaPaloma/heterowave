@@ -19,7 +19,7 @@ from .data import (
     sector_mask_to_angle_mask,
 )
 from .metrics import ReconstructionMetricAccumulator, UncertaintyMetricAccumulator
-from .models import FBPUNet, HeteroWave, HeteroWaveV2, HeteroWaveV3
+from .models import FBPUNet, HeteroWave, HeteroWaveV2, HeteroWaveV3, LearnedPrimalDual
 
 FEATURE_FBP_MODELS = {"masked_fbp_unet", "heterowave_v2", "heterowave_v3"}
 
@@ -83,6 +83,15 @@ def create_loaders(config: ProjectConfig):
 def build_model(config: ProjectConfig) -> nn.Module:
     if config.model.name in {"fbp_unet", "masked_fbp_unet"}:
         return FBPUNet(channels=config.model.channels, residual_output=config.model.residual_output)
+    if config.model.name == "learned_primal_dual":
+        return LearnedPrimalDual(
+            image_size=config.data.image_size,
+            num_angles=config.physics.num_angles,
+            num_sectors=config.physics.num_sectors,
+            iterations=config.model.primal_dual_iterations,
+            hidden_channels=config.model.primal_dual_hidden_channels,
+            align_corners=config.physics.align_corners,
+        )
     if config.model.name == "heterowave_v2":
         model = HeteroWaveV2(
             image_size=config.data.image_size,
@@ -171,6 +180,9 @@ def training_prediction(
             features = fbp_unet_features(sinogram.float(), metadata, angle_mask=angle_mask)
         output = model(features)
         return (output, sector_mask) if return_aux else output
+    if config.model.name == "learned_primal_dual":
+        output = model(sinogram, sector_mask, metadata)
+        return (output, sector_mask) if return_aux else output
     if config.model.name in {"heterowave_v2", "heterowave_v3"}:
         angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1])
         with torch.no_grad(), torch.autocast(device_type=sinogram.device.type, enabled=False):
@@ -228,6 +240,8 @@ def validate(
                     if not isinstance(output, dict):
                         raise ValueError("Uncertainty model must return a distribution")
                     uncertainty_metrics.update(output["log_variance"], prediction, target)
+            elif config.model.name == "learned_primal_dual":
+                prediction = model(sinogram, sector_mask, metadata)
             else:
                 output = model(sinogram, sector_mask)
                 prediction = output["mean"] if isinstance(output, dict) else output

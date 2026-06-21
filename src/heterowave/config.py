@@ -54,6 +54,8 @@ class ModelConfig:
     mask_embedding_dim: int = 64
     fusion_gate_init: float = 0.0
     freeze_global_trunk: bool = False
+    primal_dual_iterations: int = 3
+    primal_dual_hidden_channels: int = 16
 
 
 @dataclass
@@ -136,8 +138,9 @@ class ProjectConfig:
         if self.physics.num_sectors < 1:
             raise ValueError("num_sectors must be positive")
         heterowave_models = {"heterowave", "heterowave_v2", "heterowave_v3"}
-        if self.model.name in heterowave_models and self.physics.num_angles % self.physics.num_sectors != 0:
-            raise ValueError("HeteroWave requires num_sectors to divide num_angles")
+        sector_models = {*heterowave_models, "learned_primal_dual"}
+        if self.model.name in sector_models and self.physics.num_angles % self.physics.num_sectors != 0:
+            raise ValueError("sector-mask models require num_sectors to divide num_angles")
         if self.data.batch_size < 1 or self.data.train_samples < 1 or self.data.val_samples < 1:
             raise ValueError("batch size and synthetic split sizes must be positive")
         if self.physics.detector_bins is not None and self.physics.detector_bins < 2:
@@ -148,10 +151,16 @@ class ProjectConfig:
             raise ValueError("persistent_workers requires num_workers > 0")
         if self.data.preprocess:
             raise ValueError("Preprocessing must be run explicitly before training")
-        if self.model.name not in {"fbp_unet", "masked_fbp_unet", *heterowave_models} or len(self.model.channels) < 2:
+        allowed_models = {
+            "fbp_unet",
+            "masked_fbp_unet",
+            "learned_primal_dual",
+            *heterowave_models,
+        }
+        if self.model.name not in allowed_models or len(self.model.channels) < 2:
             raise ValueError(
-                "model.name must be fbp_unet, masked_fbp_unet, heterowave, heterowave_v2, "
-                "or heterowave_v3 "
+                "model.name must be fbp_unet, masked_fbp_unet, learned_primal_dual, "
+                "heterowave, heterowave_v2, or heterowave_v3 "
                 "with at least two channel levels"
             )
         if any(channel < 1 for channel in self.model.channels):
@@ -162,6 +171,8 @@ class ProjectConfig:
             raise ValueError("model.angle_fourier_bands must be nonnegative")
         if self.model.mask_fourier_bands < 0 or self.model.mask_embedding_dim < 1:
             raise ValueError("model mask-geometry settings are invalid")
+        if self.model.primal_dual_iterations < 1 or self.model.primal_dual_hidden_channels < 1:
+            raise ValueError("model primal-dual settings must be positive")
         if min(
             self.acquisition.noise_std,
             self.acquisition.gain_std,

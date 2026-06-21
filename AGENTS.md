@@ -722,6 +722,53 @@ Avoid this framing:
 
 ## Important commands
 
+### Train learned primal-dual external comparison baseline
+
+Implemented locally on 2026-06-21, not yet benchmarked on Drive.
+
+Added model:
+
+- `learned_primal_dual`: compact unrolled physics baseline. It initializes
+  from masked FBP, projects the current image with the repo PyTorch forward
+  projector, backprojects the observed residual, and applies learned CNN
+  updates. It starts as masked FBP because update heads are zero-initialized.
+
+Configs:
+
+```text
+configs/local_learned_primal_dual_smoke.yaml
+configs/colab_learned_primal_dual.yaml
+```
+
+Train learned primal-dual on Colab:
+
+```bash
+python -m heterowave.train --config configs/colab_learned_primal_dual.yaml
+```
+
+Resume learned primal-dual:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_learned_primal_dual.yaml \
+  --resume /content/drive/MyDrive/heterowave/results/learned_primal_dual/last.pt
+```
+
+Evaluate learned primal-dual validation:
+
+```bash
+python -m heterowave.evaluate \
+  --config configs/colab_learned_primal_dual.yaml \
+  --suite \
+  --unet-checkpoint /content/drive/MyDrive/heterowave/results/fbp_unet_baseline/best.pt \
+  --masked-unet-checkpoint /content/drive/MyDrive/heterowave/results/masked_fbp_unet/best.pt \
+  --heterowave-checkpoint /content/drive/MyDrive/heterowave/results/learned_primal_dual/best.pt \
+  --output-dir /content/drive/MyDrive/heterowave/results/learned_primal_dual_validation
+```
+
+Use `--split test` and a separate output folder only after validation looks
+worth reporting.
+
 ### Train masked FBP U-Net
 
 ```bash
@@ -931,3 +978,59 @@ breadcrumbs when explaining design decisions.
 - A future "v4" should probably be dual-domain or unrolled, not just more
   attention.
 - Keep this file current.
+
+## 2026-06-21 gated pooling validation/test result
+
+Branch: `experiment/gated-sector-pooling`.
+
+Drive artifacts:
+
+```text
+/content/drive/MyDrive/heterowave/results/heterowave_gated_pooling
+/content/drive/MyDrive/heterowave/results/heterowave_gated_pooling_validation
+/content/drive/MyDrive/heterowave/results/heterowave_gated_pooling_test
+```
+
+Important naming caveat: evaluator rows label the branch model as
+`heterowave_v3_mean_var_count` because the branch reuses the `heterowave_v3`
+model slot. In these gated-pooling result folders, that row is the gated
+pooling checkpoint.
+
+Measured validation average NRMSE:
+
+| Model | All scenarios | Missing-view only |
+|---|---:|---:|
+| Masked FBP U-Net | 0.35221 | 0.38739 |
+| HeteroWave v2 historical | 0.34375 | 0.37817 |
+| HeteroWave v3 historical | 0.34334 | not recorded here |
+| Gated pooling | 0.34292 | 0.37739 |
+
+Measured held-out test average NRMSE:
+
+| Model | All scenarios | Missing-view only |
+|---|---:|---:|
+| Masked FBP U-Net | 0.38142 | 0.42020 |
+| HeteroWave v2 historical | 0.38075 | 0.41981 |
+| HeteroWave v3 historical | 0.38116 | 0.42046 |
+| Gated pooling | 0.38127 | 0.42060 |
+
+Test scenario conclusion:
+
+- gated pooling is strong on `all_16`, `observed_12`, `random_8`,
+  `random_4`, and `random_2`;
+- it beats masked U-Net on the random/full cases and is broadly comparable to
+  v3 there;
+- it is still worse than masked U-Net and v2 on contiguous wedges;
+- the all-scenario test average is slightly better than masked U-Net but worse
+  than v2 and slightly worse than v3;
+- the missing-view-only test average is worse than masked U-Net because wedge
+  regressions dominate.
+
+Interpretation:
+
+- gated sector pooling is a positive validation ablation and supports the idea
+  that HeMIS-style equal pooling can be improved;
+- it does not solve the central limited-angle wedge problem;
+- do not present gated pooling as the new overall best model;
+- use it as evidence for learned reliability/attention pooling, then continue
+  toward dual-domain missing-sinogram completion for wedges.
