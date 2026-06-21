@@ -1,108 +1,157 @@
-"""Evaluate Phase 4 FBP and FBP + U-Net baselines."""
+"""Evaluate individual baselines or the deterministic Phase 6 suite."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import time
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
 
-from .baselines import fbp_normalized_speed, fbp_unet_features
 from .config import load_config
-from .data import CachedHeteroWaveDataset, SyntheticReconstructionDataset
-from .metrics import ReconstructionMetricAccumulator
-from .models import FBPUNet
-from .physics import parallel_beam_project
+from .data import CachedHeteroWaveDataset, SyntheticReconstructionDataset, load_validation_masks
+from .evaluation import (
+    evaluate_scenario,
+    load_trained_model,
+    plot_architecture,
+    plot_qualitative_grid,
+    plot_robustness,
+    save_provenance,
+    write_metrics_csv,
+)
 from .training import resolve_device
 
 
-def main(argv: list[str] | None = None) -> dict[str, float]:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/local_smoke.yaml")
-    parser.add_argument("--baseline", choices=("fbp", "unet"), default="fbp")
-    parser.add_argument("--checkpoint")
-    parser.add_argument("--split", choices=("train", "val", "test"), default="val")
-    parser.add_argument("overrides", nargs="*")
-    args = parser.parse_args(argv)
-    config = load_config(args.config, args.overrides)
-    device = resolve_device(config.device)
+def _dataset(config, split):
     if config.data.dataset == "cached":
-        dataset = CachedHeteroWaveDataset(config.data.root, args.split)
-    else:
-        count = config.data.train_samples if args.split == "train" else config.data.val_samples
-        dataset = SyntheticReconstructionDataset(
-            count, config.data.image_size, config.physics.num_angles, seed=config.seed + 1
-        )
-    loader = DataLoader(
+        return CachedHeteroWaveDataset(config.data.root, split)
+    count = config.data.train_samples if split == "train" else config.data.val_samples
+    return SyntheticReconstructionDataset(count, config.data.image_size, config.physics.num_angles, seed=config.seed + 1)
+
+
+def _loader(config, dataset):
+    return DataLoader(
         dataset,
         batch_size=config.data.batch_size,
         num_workers=config.data.num_workers,
         pin_memory=config.data.pin_memory,
         persistent_workers=config.data.persistent_workers,
     )
-    model = None
-    if args.baseline == "unet":
-        if not args.checkpoint:
-            parser.error("--checkpoint is required for the unet baseline")
-        model = FBPUNet(
-            channels=config.model.channels, residual_output=config.model.residual_output
-        ).to(device)
-        checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
-        model.load_state_dict(checkpoint["model"])
-        model.eval()
 
-    metrics = ReconstructionMetricAccumulator()
-    residual_sum, residual_count, inference_seconds = 0.0, 0, 0.0
-    if device.type == "cuda":
-        torch.cuda.reset_peak_memory_stats(device)
-    with torch.inference_mode():
-        for batch in loader:
-            target = batch["target"].to(device, non_blocking=True)
-            sinogram = batch["sinogram"].to(device, non_blocking=True)
-            if device.type == "cuda":
-                torch.cuda.synchronize(device)
-            started = time.perf_counter()
-            if model is None:
-                prediction = fbp_normalized_speed(sinogram, dataset.metadata)
-            else:
-                prediction = model(fbp_unet_features(sinogram, dataset.metadata))
-            if device.type == "cuda":
-                torch.cuda.synchronize(device)
-            inference_seconds += time.perf_counter() - started
-            metrics.update(prediction, target)
-            speed = prediction * float(dataset.metadata["speed_std"]) + float(dataset.metadata["speed_mean"])
-            speed = speed.clamp_min(1.0)
-            slowness_contrast = speed.reciprocal() - (1.0 / float(dataset.metadata["water_speed"]))
-            reprojection = parallel_beam_project(
-                slowness_contrast,
-                num_angles=int(dataset.metadata["num_angles"]),
-                detector_bins=int(dataset.metadata["detector_bins"]),
-                align_corners=bool(dataset.metadata.get("align_corners", False)),
-            )
-            residual_sum += float((reprojection - sinogram).abs().sum())
-            residual_count += sinogram.numel()
-    values = metrics.compute()
-    values["observed_data_residual"] = residual_sum / residual_count
-    values["inference_ms_per_sample"] = inference_seconds * 1000.0 / len(dataset)
-    values["peak_gpu_memory_mb"] = (
-        torch.cuda.max_memory_allocated(device) / 1024**2 if device.type == "cuda" else 0.0
-    )
-    result = {
-        "baseline": args.baseline,
-        "split": args.split,
-        "samples": len(dataset),
-        **values,
-    }
-    output = Path(config.output.root)
+
+def main(argv: list[str] | None = None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="configs/local_smoke.yaml")
+    parser.add_argument("--suite", action="store_true")
+    parser.add_argument("--baseline", choices=("fbp", "unet"), default="fbp")
+    parser.add_argument("--checkpoint", help="Checkpoint for single-model U-Net evaluation")
+    parser.add_argument("--unet-checkpoint")
+    parser.add_argument("--heterowave-checkpoint")
+    parser.add_argument("--masks")
+    parser.add_argument("--output-dir")
+    parser.add_argument("--split", choices=("train", "val", "test"), default="val")
+    parser.add_argument("--max-samples", type=int)
+    parser.add_argument("--qualitative-index", type=int, default=0)
+    parser.add_argument("overrides", nargs="*")
+    args = parser.parse_args(argv)
+    config = load_config(args.config, args.overrides)
+    device = resolve_device(config.device)
+    dataset = _dataset(config, args.split)
+    loader = _loader(config, dataset)
+    mask_path = args.masks or config.masking.validation_masks
+    if mask_path:
+        masks = load_validation_masks(mask_path)
+    else:
+        masks = {"all_16": torch.ones(config.physics.num_sectors, dtype=torch.bool)}
+
+    if not args.suite:
+        model = None
+        label = "fbp"
+        if args.baseline == "unet":
+            if not args.checkpoint:
+                parser.error("--checkpoint is required for the unet baseline")
+            model, _, _ = load_trained_model(args.checkpoint, device)
+            label = "fbp_unet"
+        scenario = "all_16"
+        row = evaluate_scenario(
+            kind=args.baseline,
+            label=label,
+            model=model,
+            loader=loader,
+            metadata=dataset.metadata,
+            scenario=scenario,
+            mask=masks[scenario],
+            device=device,
+            max_samples=args.max_samples,
+        )
+        output = Path(args.output_dir or config.output.root)
+        output.mkdir(parents=True, exist_ok=True)
+        path = output / f"{label}_{args.split}_metrics.json"
+        path.write_text(json.dumps(row, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(row, indent=2, sort_keys=True))
+        print(f"saved={path.resolve()}")
+        return row
+
+    if not args.unet_checkpoint or not args.heterowave_checkpoint:
+        parser.error("--suite requires --unet-checkpoint and --heterowave-checkpoint")
+    if not mask_path:
+        parser.error("--suite requires deterministic masks through --masks or config.masking.validation_masks")
+    output = Path(args.output_dir or config.output.root)
     output.mkdir(parents=True, exist_ok=True)
-    result_path = output / f"{args.baseline}_{args.split}_metrics.json"
-    result_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps(result, indent=2, sort_keys=True))
-    print(f"saved={result_path.resolve()}")
-    return values
+    unet, _, unet_provenance = load_trained_model(args.unet_checkpoint, device)
+    heterowave, heterowave_config, heterowave_provenance = load_trained_model(args.heterowave_checkpoint, device)
+    heterowave_label = f"heterowave_{heterowave_config.model.aggregation}"
+    models = [
+        ("fbp", "fbp", None),
+        ("unet", "fbp_unet", unet),
+        ("heterowave", heterowave_label, heterowave),
+    ]
+    rows = []
+    for scenario, mask in masks.items():
+        for kind, label, model in models:
+            row = evaluate_scenario(
+                kind=kind,
+                label=label,
+                model=model,
+                loader=loader,
+                metadata=dataset.metadata,
+                scenario=scenario,
+                mask=mask,
+                device=device,
+                max_samples=args.max_samples,
+            )
+            rows.append(row)
+            print(json.dumps(row, sort_keys=True))
+    write_metrics_csv(rows, output / "metrics_by_scenario.csv")
+    plot_robustness(rows, output)
+    plot_qualitative_grid(
+        dataset=dataset,
+        masks=masks,
+        unet=unet,
+        heterowave=heterowave,
+        device=device,
+        path=output / "qualitative_grid.png",
+        index=args.qualitative_index,
+    )
+    plot_architecture(heterowave_config, output / "architecture.png")
+    save_provenance(
+        output_dir=output,
+        evaluation_config=config,
+        split=args.split,
+        mask_path=mask_path,
+        checkpoint_provenance=[unet_provenance, heterowave_provenance],
+        heterowave_checkpoint=args.heterowave_checkpoint,
+    )
+    summary = {
+        "split": args.split,
+        "samples": rows[0]["samples"],
+        "scenarios": list(masks),
+        "models": [label for _, label, _ in models],
+    }
+    (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print(f"saved={output.resolve()}")
+    return rows
 
 
 if __name__ == "__main__":

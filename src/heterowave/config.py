@@ -213,3 +213,10 @@ def load_config(path: str | Path, overrides: list[str] | None = None) -> Project
     config = _construct(ProjectConfig, values)
     config.validate()
     return config
+
+
+def project_config_from_dict(values: dict[str, Any]) -> ProjectConfig:
+    """Reconstruct and validate a configuration embedded in a checkpoint."""
+    config = _construct(ProjectConfig, values)
+    config.validate()
+    return config

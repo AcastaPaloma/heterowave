@@ -117,6 +117,24 @@ python scripts/generate_validation_masks.py \
   --seed 1337
 ```
 
+## Phase 6 deterministic evaluation
+
+Run the full validation suite with the two best learned checkpoints:
+
+```bash
+python -m heterowave.evaluate \
+  --config configs/research_benchmark.yaml \
+  --suite \
+  --unet-checkpoint /content/drive/MyDrive/heterowave/results/fbp_unet_baseline/best.pt \
+  --heterowave-checkpoint /content/drive/MyDrive/heterowave/results/heterowave_mean_var_count/best.pt \
+  --split val
+```
+
+This writes `metrics_by_scenario.csv`, random/wedge robustness plots, a
+qualitative grid, architecture diagram, configuration, checkpoint provenance,
+and a copy of the selected HeteroWave checkpoint. Use `--split test` only for
+the final frozen evaluation. `--max-samples N` is available for smoke tests.
+
 The local configuration is deliberately tiny and uses FP32, `num_workers: 0`,
 and `torch.compile: false`. It generates synthetic data in memory and performs
 no dataset download or preprocessing.
