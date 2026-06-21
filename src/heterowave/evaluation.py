@@ -199,6 +199,7 @@ def plot_qualitative_grid(
     heterowave: nn.Module,
     device: torch.device,
     path: str | Path,
+    unet_label: str = "FBP + U-Net",
     index: int = 0,
 ) -> Path:
     scenarios = [name for name in ("all_16", "random_8", "contiguous_4", "random_2") if name in masks]
@@ -214,7 +215,7 @@ def plot_qualitative_grid(
         unet_prediction = predict_with_mask("unet", unet, sinogram, sector_mask, dataset.metadata)
         hetero_prediction = predict_with_mask("heterowave", heterowave, sinogram, sector_mask, dataset.metadata)
         images = [target, sector_mask.float().view(1, 1, 1, -1), fbp, unet_prediction, hetero_prediction, (hetero_prediction - target).abs()]
-        titles = ["Target", "Available sectors", "FBP", "FBP + U-Net", "HeteroWave", "HeteroWave |error|"]
+        titles = ["Target", "Available sectors", "FBP", unet_label, "HeteroWave", "HeteroWave |error|"]
         for column, (image, title) in enumerate(zip(images, titles)):
             axis = axes[row_index, column]
             array = image[0, 0].float().cpu().numpy()

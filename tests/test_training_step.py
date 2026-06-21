@@ -1,10 +1,13 @@
 import torch
+from torch import nn
 
+import heterowave.training as training
 from heterowave.baselines import fbp_normalized_speed, fbp_unet_features
+from heterowave.config import load_config
 from heterowave.data import SyntheticReconstructionDataset
 from heterowave.losses import reconstruction_loss
 from heterowave.models import FBPUNet
-from heterowave.training import resolve_device
+from heterowave.training import resolve_device, training_prediction
 
 
 def _batch(count=4, size=16, angles=8):
@@ -58,6 +61,25 @@ def test_tiny_unet_overfits_eight_examples():
     with torch.no_grad():
         final, _ = reconstruction_loss(model(features), target)
     assert final < initial * 0.35
+
+
+def test_masked_unet_training_builds_mask_aware_fbp_features(monkeypatch):
+    _, sinogram, metadata = _batch(count=2, size=32, angles=16)
+    config = load_config("configs/local_masked_unet_smoke.yaml", ["device=cpu"])
+    fixed_mask = torch.tensor([1, 0] * 8, dtype=torch.bool).repeat(2, 1)
+    monkeypatch.setattr(training, "sample_sector_masks", lambda *args, **kwargs: fixed_mask)
+
+    class CaptureFeatures(nn.Module):
+        def forward(self, features):
+            self.features = features
+            return features[:, :1]
+
+    model = CaptureFeatures()
+    prediction = training_prediction(model, sinogram, metadata, config, torch.Generator().manual_seed(1337))
+    assert prediction.shape == (2, 1, 32, 32)
+    assert model.features.shape == (2, 3, 32, 32)
+    torch.testing.assert_close(model.features[:, 2], torch.full_like(model.features[:, 2], 0.5))
+    assert torch.isfinite(model.features).all()
 
 
 def test_resolve_device_uses_available_cuda_without_arch_list_filter(monkeypatch):

@@ -7,6 +7,7 @@ from heterowave.config import load_config
 
 CONFIG = Path(__file__).parents[1] / "configs" / "local_smoke.yaml"
 HETEROWAVE_CONFIG = Path(__file__).parents[1] / "configs" / "local_heterowave_smoke.yaml"
+MASKED_UNET_CONFIG = Path(__file__).parents[1] / "configs" / "local_masked_unet_smoke.yaml"
 
 
 def test_local_config_is_safe_and_tiny():
@@ -31,3 +32,12 @@ def test_heterowave_config_enables_masked_set_model():
     assert config.model.aggregation == "mean_var_count"
     assert config.physics.num_angles % config.physics.num_sectors == 0
     assert config.masking.minimum_sectors == 2
+
+
+def test_masked_unet_config_matches_heterowave_mask_protocol():
+    baseline = load_config(MASKED_UNET_CONFIG)
+    heterowave = load_config(HETEROWAVE_CONFIG)
+    assert baseline.model.name == "masked_fbp_unet"
+    assert baseline.seed == heterowave.seed == 1337
+    assert baseline.physics.num_sectors == heterowave.physics.num_sectors
+    assert baseline.masking == heterowave.masking

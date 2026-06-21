@@ -56,6 +56,9 @@ def test_scenario_metrics_include_missingness_and_runtime_fields():
 
 def test_complete_phase6_suite_writes_all_artifacts(tmp_path):
     unet_checkpoint = _checkpoint(ROOT / "configs" / "local_smoke.yaml", tmp_path / "unet.pt")
+    masked_unet_checkpoint = _checkpoint(
+        ROOT / "configs" / "local_masked_unet_smoke.yaml", tmp_path / "masked_unet.pt"
+    )
     heterowave_checkpoint = _checkpoint(
         ROOT / "configs" / "local_heterowave_smoke.yaml", tmp_path / "heterowave.pt"
     )
@@ -67,6 +70,8 @@ def test_complete_phase6_suite_writes_all_artifacts(tmp_path):
             "--suite",
             "--unet-checkpoint",
             str(unet_checkpoint),
+            "--masked-unet-checkpoint",
+            str(masked_unet_checkpoint),
             "--heterowave-checkpoint",
             str(heterowave_checkpoint),
             "--output-dir",
@@ -77,7 +82,7 @@ def test_complete_phase6_suite_writes_all_artifacts(tmp_path):
             "data.batch_size=1",
         ]
     )
-    assert len(rows) == 8 * 3
+    assert len(rows) == 8 * 4
     expected = {
         "metrics_by_scenario.csv",
         "robustness_random.png",
@@ -93,7 +98,13 @@ def test_complete_phase6_suite_writes_all_artifacts(tmp_path):
     assert expected <= {path.name for path in output.iterdir()}
     with (output / "metrics_by_scenario.csv").open(newline="", encoding="utf-8") as handle:
         saved_rows = list(csv.DictReader(handle))
-    assert len(saved_rows) == 24
+    assert len(saved_rows) == 32
+    assert {row["model"] for row in saved_rows} == {
+        "fbp",
+        "fbp_unet",
+        "masked_fbp_unet",
+        "heterowave_mean_var_count",
+    }
     assert {row["scenario"] for row in saved_rows} == {
         "all_16",
         "observed_12",

@@ -16,6 +16,7 @@ from .data import (
     generate_fixed_validation_masks,
     load_validation_masks,
     sample_sector_masks,
+    sector_mask_to_angle_mask,
 )
 from .metrics import ReconstructionMetricAccumulator
 from .models import FBPUNet, HeteroWave
@@ -78,7 +79,7 @@ def create_loaders(config: ProjectConfig):
 
 
 def build_model(config: ProjectConfig) -> nn.Module:
-    if config.model.name == "fbp_unet":
+    if config.model.name in {"fbp_unet", "masked_fbp_unet"}:
         return FBPUNet(channels=config.model.channels, residual_output=config.model.residual_output)
     return HeteroWave(
         image_size=config.data.image_size,
@@ -112,6 +113,11 @@ def training_prediction(
         periodic_probability=config.masking.periodic_probability,
         generator=mask_generator,
     ).to(sinogram.device)
+    if config.model.name == "masked_fbp_unet":
+        angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1])
+        with torch.no_grad(), torch.autocast(device_type=sinogram.device.type, enabled=False):
+            features = fbp_unet_features(sinogram.float(), metadata, angle_mask=angle_mask)
+        return model(features)
     output = model(sinogram, sector_mask)
     return output["mean"] if isinstance(output, dict) else output
 
@@ -135,7 +141,7 @@ def validate(
 ) -> dict[str, float]:
     model.eval()
     metrics = ReconstructionMetricAccumulator()
-    fixed_masks = _validation_masks(config) if config.model.name == "heterowave" else []
+    fixed_masks = _validation_masks(config) if config.model.name != "fbp_unet" else []
     sample_offset = 0
     for batch in loader:
         target = batch["target"].to(device, non_blocking=True)
@@ -146,8 +152,12 @@ def validate(
             sector_mask = torch.stack(
                 [fixed_masks[(sample_offset + index) % len(fixed_masks)] for index in range(len(sinogram))]
             ).to(device)
-            output = model(sinogram, sector_mask)
-            prediction = output["mean"] if isinstance(output, dict) else output
+            if config.model.name == "masked_fbp_unet":
+                angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1])
+                prediction = model(fbp_unet_features(sinogram, metadata, angle_mask=angle_mask))
+            else:
+                output = model(sinogram, sector_mask)
+                prediction = output["mean"] if isinstance(output, dict) else output
             sample_offset += len(sinogram)
         metrics.update(prediction, target)
     return metrics.compute()

@@ -109,6 +109,25 @@ python -m heterowave.train \
   --resume /content/drive/MyDrive/heterowave/results/heterowave_mean_var_count/last.pt
 ```
 
+### Fair masked U-Net comparison
+
+The fair U-Net baseline uses the same 16-sector masking curriculum, seed,
+batch size, optimizer, loss, validation masks, channel widths, and 40-epoch
+budget as the completed HeteroWave run. Its input is a masked FBP together
+with angular-coverage and observed-fraction channels.
+
+```bash
+python -m heterowave.train --config configs/colab_masked_baseline.yaml
+```
+
+Resume after a Colab disconnect:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_masked_baseline.yaml \
+  --resume /content/drive/MyDrive/heterowave/results/masked_fbp_unet/last.pt
+```
+
 Regenerate the committed fixed masks when the validation protocol changes:
 
 ```bash
@@ -127,6 +146,21 @@ python -m heterowave.evaluate \
   --suite \
   --unet-checkpoint /content/drive/MyDrive/heterowave/results/fbp_unet_baseline/best.pt \
   --heterowave-checkpoint /content/drive/MyDrive/heterowave/results/heterowave_mean_var_count/best.pt \
+  --split val
+```
+
+Add the masked U-Net checkpoint for the fair sparse-view comparison. Use a
+fresh output directory so validation and test artifacts cannot overwrite one
+another:
+
+```bash
+python -m heterowave.evaluate \
+  --config configs/research_benchmark.yaml \
+  --suite \
+  --unet-checkpoint /content/drive/MyDrive/heterowave/results/fbp_unet_baseline/best.pt \
+  --masked-unet-checkpoint /content/drive/MyDrive/heterowave/results/masked_fbp_unet/best.pt \
+  --heterowave-checkpoint /content/drive/MyDrive/heterowave/results/heterowave_mean_var_count/best.pt \
+  --output-dir /content/drive/MyDrive/heterowave/results/phase6_fair_validation \
   --split val
 ```
 

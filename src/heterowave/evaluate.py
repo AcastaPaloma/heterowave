@@ -47,6 +47,7 @@ def main(argv: list[str] | None = None):
     parser.add_argument("--baseline", choices=("fbp", "unet"), default="fbp")
     parser.add_argument("--checkpoint", help="Checkpoint for single-model U-Net evaluation")
     parser.add_argument("--unet-checkpoint")
+    parser.add_argument("--masked-unet-checkpoint")
     parser.add_argument("--heterowave-checkpoint")
     parser.add_argument("--masks")
     parser.add_argument("--output-dir")
@@ -71,8 +72,8 @@ def main(argv: list[str] | None = None):
         if args.baseline == "unet":
             if not args.checkpoint:
                 parser.error("--checkpoint is required for the unet baseline")
-            model, _, _ = load_trained_model(args.checkpoint, device)
-            label = "fbp_unet"
+            model, model_config, _ = load_trained_model(args.checkpoint, device)
+            label = model_config.model.name
         scenario = "all_16"
         row = evaluate_scenario(
             kind=args.baseline,
@@ -93,20 +94,37 @@ def main(argv: list[str] | None = None):
         print(f"saved={path.resolve()}")
         return row
 
-    if not args.unet_checkpoint or not args.heterowave_checkpoint:
-        parser.error("--suite requires --unet-checkpoint and --heterowave-checkpoint")
+    if not (args.unet_checkpoint or args.masked_unet_checkpoint) or not args.heterowave_checkpoint:
+        parser.error(
+            "--suite requires --heterowave-checkpoint and at least one of "
+            "--unet-checkpoint or --masked-unet-checkpoint"
+        )
     if not mask_path:
         parser.error("--suite requires deterministic masks through --masks or config.masking.validation_masks")
     output = Path(args.output_dir or config.output.root)
     output.mkdir(parents=True, exist_ok=True)
-    unet, _, unet_provenance = load_trained_model(args.unet_checkpoint, device)
     heterowave, heterowave_config, heterowave_provenance = load_trained_model(args.heterowave_checkpoint, device)
     heterowave_label = f"heterowave_{heterowave_config.model.aggregation}"
-    models = [
-        ("fbp", "fbp", None),
-        ("unet", "fbp_unet", unet),
-        ("heterowave", heterowave_label, heterowave),
-    ]
+    models = [("fbp", "fbp", None)]
+    checkpoint_provenance = []
+    qualitative_unet = None
+    qualitative_unet_label = "FBP + U-Net"
+    if args.unet_checkpoint:
+        unet, unet_config, unet_provenance = load_trained_model(args.unet_checkpoint, device)
+        models.append(("unet", unet_config.model.name, unet))
+        checkpoint_provenance.append(unet_provenance)
+        qualitative_unet = unet
+        qualitative_unet_label = unet_config.model.name
+    if args.masked_unet_checkpoint:
+        masked_unet, masked_config, masked_provenance = load_trained_model(args.masked_unet_checkpoint, device)
+        if masked_config.model.name != "masked_fbp_unet":
+            parser.error("--masked-unet-checkpoint must contain a masked_fbp_unet model")
+        models.append(("unet", masked_config.model.name, masked_unet))
+        checkpoint_provenance.append(masked_provenance)
+        qualitative_unet = masked_unet
+        qualitative_unet_label = "Masked FBP + U-Net"
+    models.append(("heterowave", heterowave_label, heterowave))
+    checkpoint_provenance.append(heterowave_provenance)
     rows = []
     for scenario, mask in masks.items():
         for kind, label, model in models:
@@ -128,7 +146,8 @@ def main(argv: list[str] | None = None):
     plot_qualitative_grid(
         dataset=dataset,
         masks=masks,
-        unet=unet,
+        unet=qualitative_unet,
+        unet_label=qualitative_unet_label,
         heterowave=heterowave,
         device=device,
         path=output / "qualitative_grid.png",
@@ -140,7 +159,7 @@ def main(argv: list[str] | None = None):
         evaluation_config=config,
         split=args.split,
         mask_path=mask_path,
-        checkpoint_provenance=[unet_provenance, heterowave_provenance],
+        checkpoint_provenance=checkpoint_provenance,
         heterowave_checkpoint=args.heterowave_checkpoint,
     )
     summary = {
