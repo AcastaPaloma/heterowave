@@ -148,10 +148,16 @@ class ProjectConfig:
             raise ValueError("persistent_workers requires num_workers > 0")
         if self.data.preprocess:
             raise ValueError("Preprocessing must be run explicitly before training")
-        if self.model.name not in {"fbp_unet", "masked_fbp_unet", *heterowave_models} or len(self.model.channels) < 2:
+        allowed_models = {
+            "fbp_unet",
+            "masked_fbp_unet",
+            "fbpconvnet",
+            *heterowave_models,
+        }
+        if self.model.name not in allowed_models or len(self.model.channels) < 2:
             raise ValueError(
-                "model.name must be fbp_unet, masked_fbp_unet, heterowave, heterowave_v2, "
-                "or heterowave_v3 "
+                "model.name must be fbp_unet, masked_fbp_unet, fbpconvnet, heterowave, "
+                "heterowave_v2, or heterowave_v3 "
                 "with at least two channel levels"
             )
         if any(channel < 1 for channel in self.model.channels):

@@ -26,7 +26,14 @@ from .metrics import ReconstructionMetricAccumulator, UncertaintyMetricAccumulat
 from .physics import parallel_beam_project
 from .training import build_model
 
-ModelKind = Literal["fbp", "unet", "heterowave", "heterowave_v2", "heterowave_v3"]
+ModelKind = Literal[
+    "fbp",
+    "unet",
+    "fbpconvnet",
+    "heterowave",
+    "heterowave_v2",
+    "heterowave_v3",
+]
 
 
 def file_sha256(path: str | Path) -> str:
@@ -71,6 +78,8 @@ def predict_with_mask(
         raise ValueError(f"A trained model is required for {kind}")
     if kind == "unet":
         return model(fbp_unet_features(sinogram, metadata, angle_mask=angle_mask))
+    if kind == "fbpconvnet":
+        return model(fbp_normalized_speed(sinogram, metadata, angle_mask=angle_mask))
     if kind in {"heterowave_v2", "heterowave_v3"}:
         features = fbp_unet_features(sinogram, metadata, angle_mask=angle_mask)
         output = model(sinogram, sector_mask, features)
@@ -303,24 +312,33 @@ def save_provenance(
 
 
 def plot_architecture(config: ProjectConfig, path: str | Path) -> Path:
-    """Save a compact architecture flow diagram for the evaluated HeteroWave model."""
+    """Save a compact architecture flow diagram for the evaluated reconstruction model."""
     figure, axis = plt.subplots(figsize=(12, 2.8), constrained_layout=True)
     axis.set_xlim(0, 1)
     axis.set_ylim(0, 1)
     axis.axis("off")
-    aggregation = (
-        "Sector reliability\nattention + statistics"
-        if config.model.name == "heterowave_v3" and config.model.attention_fusion
-        else f"Masked {config.model.aggregation}\nat every scale"
-    )
-    labels = [
-        "Masked\nsinogram",
-        f"{config.physics.num_sectors} sector\nbackprojections",
-        "Shared encoder\n" + " → ".join(map(str, config.model.channels)),
-        aggregation,
-        "U-Net decoder",
-        "Normalized\nspeed map",
-    ]
+    if config.model.name == "fbpconvnet":
+        labels = [
+            "Masked\nsinogram",
+            "Sparse-view\nFBP",
+            "Residual\nU-Net",
+            "Artifact\ncorrection",
+            "Normalized\nspeed map",
+        ]
+    else:
+        aggregation = (
+            "Sector reliability\nattention + statistics"
+            if config.model.name == "heterowave_v3" and config.model.attention_fusion
+            else f"Masked {config.model.aggregation}\nat every scale"
+        )
+        labels = [
+            "Masked\nsinogram",
+            f"{config.physics.num_sectors} sector\nbackprojections",
+            "Shared encoder\n" + " -> ".join(map(str, config.model.channels)),
+            aggregation,
+            "U-Net decoder",
+            "Normalized\nspeed map",
+        ]
     positions = torch.linspace(0.08, 0.92, len(labels)).tolist()
     for index, (x, label) in enumerate(zip(positions, labels)):
         axis.text(x, 0.5, label, ha="center", va="center", bbox={"boxstyle": "round,pad=0.5", "facecolor": "#e8f0fe", "edgecolor": "#496a9b"})

@@ -8,7 +8,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from .baselines import fbp_unet_features
+from .baselines import fbp_normalized_speed, fbp_unet_features
 from .config import ProjectConfig
 from .data import (
     CachedHeteroWaveDataset,
@@ -19,7 +19,7 @@ from .data import (
     sector_mask_to_angle_mask,
 )
 from .metrics import ReconstructionMetricAccumulator, UncertaintyMetricAccumulator
-from .models import FBPUNet, HeteroWave, HeteroWaveV2, HeteroWaveV3
+from .models import FBPConvNet, FBPUNet, HeteroWave, HeteroWaveV2, HeteroWaveV3
 
 FEATURE_FBP_MODELS = {"masked_fbp_unet", "heterowave_v2", "heterowave_v3"}
 
@@ -83,6 +83,8 @@ def create_loaders(config: ProjectConfig):
 def build_model(config: ProjectConfig) -> nn.Module:
     if config.model.name in {"fbp_unet", "masked_fbp_unet"}:
         return FBPUNet(channels=config.model.channels, residual_output=config.model.residual_output)
+    if config.model.name == "fbpconvnet":
+        return FBPConvNet(channels=config.model.channels, residual_output=config.model.residual_output)
     if config.model.name == "heterowave_v2":
         model = HeteroWaveV2(
             image_size=config.data.image_size,
@@ -171,6 +173,12 @@ def training_prediction(
             features = fbp_unet_features(sinogram.float(), metadata, angle_mask=angle_mask)
         output = model(features)
         return (output, sector_mask) if return_aux else output
+    if config.model.name == "fbpconvnet":
+        angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1])
+        with torch.no_grad(), torch.autocast(device_type=sinogram.device.type, enabled=False):
+            fbp = fbp_normalized_speed(sinogram.float(), metadata, angle_mask=angle_mask)
+        output = model(fbp)
+        return (output, sector_mask) if return_aux else output
     if config.model.name in {"heterowave_v2", "heterowave_v3"}:
         angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1])
         with torch.no_grad(), torch.autocast(device_type=sinogram.device.type, enabled=False):
@@ -228,6 +236,10 @@ def validate(
                     if not isinstance(output, dict):
                         raise ValueError("Uncertainty model must return a distribution")
                     uncertainty_metrics.update(output["log_variance"], prediction, target)
+            elif config.model.name == "fbpconvnet":
+                angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1])
+                fbp = fbp_normalized_speed(sinogram, metadata, angle_mask=angle_mask)
+                prediction = model(fbp)
             else:
                 output = model(sinogram, sector_mask)
                 prediction = output["mean"] if isinstance(output, dict) else output
