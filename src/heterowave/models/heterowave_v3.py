@@ -71,7 +71,14 @@ class MaskGeometryEncoder(nn.Module):
 
 
 class MaskedSectorAttention(nn.Module):
-    """Permutation-invariant sector fusion with learned spatial precision maps."""
+    """Permutation-invariant sector fusion with sector-token self-attention.
+
+    This branch tests a compact Set Transformer-style idea: each sector produces
+    a global descriptor, descriptors interact through multi-head self-attention,
+    and the interaction-aware sector tokens score spatial feature maps for
+    weighted pooling. This keeps memory practical while allowing sectors to
+    condition their usefulness on the other observed sectors.
+    """
 
     def __init__(
         self,
@@ -84,6 +91,16 @@ class MaskedSectorAttention(nn.Module):
         hidden = max(channels // 4, 1)
         self.include_statistics = include_statistics
         self.min_precision = 1e-4
+        heads = 4 if channels % 4 == 0 else 1
+        self.token_attention = nn.MultiheadAttention(channels, heads, batch_first=True)
+        self.token_norm = nn.LayerNorm(channels)
+        self.token_mlp = nn.Sequential(
+            nn.LayerNorm(channels),
+            nn.Linear(channels, channels),
+            nn.GELU(),
+            nn.Linear(channels, channels),
+        )
+        self.token_score = nn.Linear(channels, 1)
         self.precision = nn.Sequential(
             nn.Conv2d(channels, hidden, 1),
             nn.GELU(),
@@ -98,8 +115,20 @@ class MaskedSectorAttention(nn.Module):
             raise ValueError("features and mask must have shapes [B,S,C,H,W] and [B,S]")
         mask = validate_sector_mask(mask, num_sectors=features.shape[1]).to(features.device)
         batch, sectors, channels, height, width = features.shape
+        descriptors = features.mean(dim=(-2, -1))
+        descriptors = descriptors.masked_fill(~mask.unsqueeze(-1), 0.0)
+        attended_tokens, _ = self.token_attention(
+            descriptors,
+            descriptors,
+            descriptors,
+            key_padding_mask=~mask,
+            need_weights=False,
+        )
+        descriptors = self.token_norm(descriptors + attended_tokens)
+        descriptors = descriptors + self.token_mlp(descriptors)
+        token_logits = self.token_score(descriptors).view(batch, sectors, 1, 1, 1)
         flat = features.reshape(batch * sectors, channels, height, width)
-        logits = self.precision(flat).reshape(batch, sectors, 1, height, width)
+        logits = self.precision(flat).reshape(batch, sectors, 1, height, width) + token_logits
         precision = F.softplus(logits) + self.min_precision
         precision = precision * mask.view(batch, sectors, 1, 1, 1).to(precision)
         total_precision = precision.sum(dim=1).clamp_min(self.min_precision)

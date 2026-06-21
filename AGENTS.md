@@ -931,3 +931,33 @@ breadcrumbs when explaining design decisions.
 - A future "v4" should probably be dual-domain or unrolled, not just more
   attention.
 - Keep this file current.
+
+## Branch experiment: set-transformer sector pooling
+
+Branch: `experiment/set-transformer-sector-pooling`.
+
+Status: implemented as a trainable branch, not yet benchmarked.
+
+Purpose:
+
+- test a compact Set Transformer-style sector-token interaction before pooling;
+- use global sector descriptors with multi-head self-attention to condition
+  spatial precision scores on the other observed sectors;
+- avoid per-pixel full self-attention over sectors at 128x128 to keep Colab
+  memory realistic.
+
+Colab train command:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_heterowave_set_transformer_pooling.yaml \
+  --initialize-from /content/drive/MyDrive/heterowave/results/heterowave_v2_fusion/best.pt
+```
+
+Local smoke:
+
+```bash
+python -m heterowave.train \
+  --config configs/local_heterowave_set_transformer_pooling_smoke.yaml \
+  device=cpu
+```
