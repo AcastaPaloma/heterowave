@@ -171,8 +171,26 @@ def evaluate_scenario(
 def write_metrics_csv(rows: list[dict[str, Any]], path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    priority = [
+        "model",
+        "scenario",
+        "observed_sectors",
+        "observed_fraction",
+        "samples",
+        "mae",
+        "rmse",
+        "nrmse",
+        "psnr",
+        "ssim",
+        "observed_data_residual",
+        "inference_ms_per_sample",
+        "peak_gpu_memory_mb",
+    ]
+    keys = {key for row in rows for key in row}
+    fieldnames = [key for key in priority if key in keys]
+    fieldnames.extend(sorted(keys - set(fieldnames)))
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
     return path

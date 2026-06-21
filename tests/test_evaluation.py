@@ -6,7 +6,7 @@ import torch
 
 from heterowave.config import load_config
 from heterowave.evaluate import main as evaluate_main
-from heterowave.evaluation import evaluate_scenario
+from heterowave.evaluation import evaluate_scenario, write_metrics_csv
 from heterowave.training import build_model, create_datasets
 from torch.utils.data import DataLoader
 
@@ -52,6 +52,33 @@ def test_scenario_metrics_include_missingness_and_runtime_fields():
     assert row["nrmse"] > 0
     assert row["observed_data_residual"] >= 0
     assert row["inference_ms_per_sample"] > 0
+
+
+def test_metrics_csv_accepts_uncertainty_only_fields(tmp_path):
+    rows = [
+        {
+            "model": "masked_fbp_unet",
+            "scenario": "random_8",
+            "nrmse": 0.4,
+            "samples": 2,
+        },
+        {
+            "model": "heterowave_mean_var_count",
+            "scenario": "random_8",
+            "nrmse": 0.38,
+            "samples": 2,
+            "uncertainty_spearman": 0.64,
+            "uncertainty_low_quartile_mae": 0.002,
+            "uncertainty_high_quartile_mae": 0.006,
+            "uncertainty_error_ratio": 3.0,
+        },
+    ]
+    path = write_metrics_csv(rows, tmp_path / "metrics.csv")
+    with path.open(newline="", encoding="utf-8") as handle:
+        saved = list(csv.DictReader(handle))
+    assert saved[0]["uncertainty_spearman"] == ""
+    assert saved[1]["uncertainty_spearman"] == "0.64"
+    assert saved[1]["uncertainty_error_ratio"] == "3.0"
 
 
 def test_complete_phase6_suite_writes_all_artifacts(tmp_path):
