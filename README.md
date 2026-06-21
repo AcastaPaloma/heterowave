@@ -195,6 +195,36 @@ Use `--resume .../last.pt` after a disconnect; do not combine `--resume` with
 `--initialize-from`. Evaluation reports uncertainty/error Spearman correlation
 and high-versus-low uncertainty quartile error in addition to Phase 6 metrics.
 
+## HeteroWave v2 experimental branch
+
+V2 starts exactly from the trained masked U-Net and adds zero-gated,
+permutation-invariant sector features. The first experiment freezes the global
+U-Net trunk and leaves data consistency off, isolating the value of sector
+fusion:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_heterowave_v2.yaml \
+  --initialize-from /content/drive/MyDrive/heterowave/results/masked_fbp_unet/best.pt
+```
+
+If fusion improves validation NRMSE, unfreeze the trunk and add Phase 7 data
+consistency in a separate run:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_heterowave_v2.yaml \
+  --initialize-from /content/drive/MyDrive/heterowave/results/heterowave_v2_fusion/best.pt \
+  model.freeze_global_trunk=false \
+  loss.data_weight=0.05 \
+  training.epochs=10 \
+  output.root=/content/drive/MyDrive/heterowave/results/heterowave_v2_physics
+```
+
+Attention remains intentionally deferred until this fusion ablation shows that
+sector features add value. The existing Phase 6 suite accepts a v2 checkpoint
+through `--heterowave-checkpoint` without a separate evaluator.
+
 The local configuration is deliberately tiny and uses FP32, `num_workers: 0`,
 and `torch.compile: false`. It generates synthetic data in memory and performs
 no dataset download or preprocessing.

@@ -45,6 +45,9 @@ class ModelConfig:
     aggregation: str = "mean_var_count"
     geometry_channels: bool = True
     uncertainty: bool = False
+    sector_fusion: bool = True
+    fusion_gate_init: float = 0.0
+    freeze_global_trunk: bool = False
 
 
 @dataclass
@@ -116,7 +119,7 @@ class ProjectConfig:
             raise ValueError("image_size must be >= 8 and num_angles must be positive")
         if self.physics.num_sectors < 1:
             raise ValueError("num_sectors must be positive")
-        if self.model.name == "heterowave" and self.physics.num_angles % self.physics.num_sectors != 0:
+        if self.model.name in {"heterowave", "heterowave_v2"} and self.physics.num_angles % self.physics.num_sectors != 0:
             raise ValueError("HeteroWave requires num_sectors to divide num_angles")
         if self.data.batch_size < 1 or self.data.train_samples < 1 or self.data.val_samples < 1:
             raise ValueError("batch size and synthetic split sizes must be positive")
@@ -128,9 +131,10 @@ class ProjectConfig:
             raise ValueError("persistent_workers requires num_workers > 0")
         if self.data.preprocess:
             raise ValueError("Preprocessing must be run explicitly before training")
-        if self.model.name not in {"fbp_unet", "masked_fbp_unet", "heterowave"} or len(self.model.channels) < 2:
+        if self.model.name not in {"fbp_unet", "masked_fbp_unet", "heterowave", "heterowave_v2"} or len(self.model.channels) < 2:
             raise ValueError(
-                "model.name must be fbp_unet, masked_fbp_unet, or heterowave with at least two channel levels"
+                "model.name must be fbp_unet, masked_fbp_unet, heterowave, or heterowave_v2 "
+                "with at least two channel levels"
             )
         if any(channel < 1 for channel in self.model.channels):
             raise ValueError("model channels must be positive")
@@ -166,6 +170,8 @@ class ProjectConfig:
             raise ValueError("model.uncertainty must be enabled when uncertainty_weight is positive")
         if self.model.uncertainty and self.model.name not in {"heterowave", "heterowave_v2"}:
             raise ValueError("uncertainty is supported by HeteroWave models")
+        if self.model.name == "heterowave_v2" and self.model.freeze_global_trunk and not self.model.sector_fusion:
+            raise ValueError("A frozen HeteroWave v2 trunk requires sector_fusion")
         if self.training.epochs < 1 or self.training.validate_every_epochs < 1:
             raise ValueError("training epochs and validation interval must be positive")
         if self.training.max_steps is not None and self.training.max_steps < 1:

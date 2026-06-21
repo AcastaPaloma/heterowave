@@ -26,7 +26,7 @@ from .metrics import ReconstructionMetricAccumulator, UncertaintyMetricAccumulat
 from .physics import parallel_beam_project
 from .training import build_model
 
-ModelKind = Literal["fbp", "unet", "heterowave"]
+ModelKind = Literal["fbp", "unet", "heterowave", "heterowave_v2"]
 
 
 def file_sha256(path: str | Path) -> str:
@@ -71,7 +71,11 @@ def predict_with_mask(
         raise ValueError(f"A trained model is required for {kind}")
     if kind == "unet":
         return model(fbp_unet_features(sinogram, metadata, angle_mask=angle_mask))
-    output = model(sinogram, sector_mask)
+    if kind == "heterowave_v2":
+        features = fbp_unet_features(sinogram, metadata, angle_mask=angle_mask)
+        output = model(sinogram, sector_mask, features)
+    else:
+        output = model(sinogram, sector_mask)
     if return_distribution and isinstance(output, dict):
         return output
     return output["mean"] if isinstance(output, dict) else output
@@ -217,6 +221,7 @@ def plot_qualitative_grid(
     device: torch.device,
     path: str | Path,
     unet_label: str = "FBP + U-Net",
+    heterowave_kind: ModelKind = "heterowave",
     index: int = 0,
 ) -> Path:
     scenarios = [name for name in ("all_16", "random_8", "contiguous_4", "random_2") if name in masks]
@@ -230,7 +235,9 @@ def plot_qualitative_grid(
         sector_mask = masks[scenario].unsqueeze(0).to(device)
         fbp = predict_with_mask("fbp", None, sinogram, sector_mask, dataset.metadata)
         unet_prediction = predict_with_mask("unet", unet, sinogram, sector_mask, dataset.metadata)
-        hetero_prediction = predict_with_mask("heterowave", heterowave, sinogram, sector_mask, dataset.metadata)
+        hetero_prediction = predict_with_mask(
+            heterowave_kind, heterowave, sinogram, sector_mask, dataset.metadata
+        )
         images = [target, sector_mask.float().view(1, 1, 1, -1), fbp, unet_prediction, hetero_prediction, (hetero_prediction - target).abs()]
         titles = ["Target", "Available sectors", "FBP", unet_label, "HeteroWave", "HeteroWave |error|"]
         for column, (image, title) in enumerate(zip(images, titles)):

@@ -2,11 +2,13 @@
 
 from .unet_baseline import FBPUNet, ResidualBlock
 from .heterowave import HeteroWave, sector_backprojections, sector_geometry
+from .heterowave_v2 import HeteroWaveV2
 from .set_stats import MaskedSetAggregator, masked_set_statistics
 
 __all__ = [
     "FBPUNet",
     "HeteroWave",
+    "HeteroWaveV2",
     "MaskedSetAggregator",
     "ResidualBlock",
     "masked_set_statistics",

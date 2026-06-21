@@ -19,7 +19,7 @@ from .data import (
     sector_mask_to_angle_mask,
 )
 from .metrics import ReconstructionMetricAccumulator, UncertaintyMetricAccumulator
-from .models import FBPUNet, HeteroWave
+from .models import FBPUNet, HeteroWave, HeteroWaveV2
 
 
 def resolve_device(requested: str) -> torch.device:
@@ -81,6 +81,25 @@ def create_loaders(config: ProjectConfig):
 def build_model(config: ProjectConfig) -> nn.Module:
     if config.model.name in {"fbp_unet", "masked_fbp_unet"}:
         return FBPUNet(channels=config.model.channels, residual_output=config.model.residual_output)
+    if config.model.name == "heterowave_v2":
+        model = HeteroWaveV2(
+            image_size=config.data.image_size,
+            num_angles=config.physics.num_angles,
+            num_sectors=config.physics.num_sectors,
+            channels=config.model.channels,
+            aggregation=config.model.aggregation,
+            geometry_channels=config.model.geometry_channels,
+            residual_output=config.model.residual_output,
+            uncertainty=config.model.uncertainty,
+            sector_fusion=config.model.sector_fusion,
+            fusion_gate_init=config.model.fusion_gate_init,
+            align_corners=config.physics.align_corners,
+        )
+        if config.model.freeze_global_trunk:
+            for module in (model.encoders, model.decoders, model.output):
+                for parameter in module.parameters():
+                    parameter.requires_grad_(False)
+        return model
     return HeteroWave(
         image_size=config.data.image_size,
         num_angles=config.physics.num_angles,
@@ -125,6 +144,14 @@ def training_prediction(
             features = fbp_unet_features(sinogram.float(), metadata, angle_mask=angle_mask)
         output = model(features)
         return (output, sector_mask) if return_aux else output
+    if config.model.name == "heterowave_v2":
+        angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1])
+        with torch.no_grad(), torch.autocast(device_type=sinogram.device.type, enabled=False):
+            features = fbp_unet_features(sinogram.float(), metadata, angle_mask=angle_mask)
+        output = model(sinogram, sector_mask, features)
+        if return_aux:
+            return output, sector_mask
+        return output["mean"] if isinstance(output, dict) else output
     output = model(sinogram, sector_mask)
     if return_aux:
         return output, sector_mask
@@ -162,9 +189,18 @@ def validate(
             sector_mask = torch.stack(
                 [fixed_masks[(sample_offset + index) % len(fixed_masks)] for index in range(len(sinogram))]
             ).to(device)
-            if config.model.name == "masked_fbp_unet":
+            if config.model.name in {"masked_fbp_unet", "heterowave_v2"}:
                 angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1])
-                prediction = model(fbp_unet_features(sinogram, metadata, angle_mask=angle_mask))
+                features = fbp_unet_features(sinogram, metadata, angle_mask=angle_mask)
+                if config.model.name == "masked_fbp_unet":
+                    output = model(features)
+                else:
+                    output = model(sinogram, sector_mask, features)
+                prediction = output["mean"] if isinstance(output, dict) else output
+                if uncertainty_metrics is not None:
+                    if not isinstance(output, dict):
+                        raise ValueError("Uncertainty model must return a distribution")
+                    uncertainty_metrics.update(output["log_variance"], prediction, target)
             else:
                 output = model(sinogram, sector_mask)
                 prediction = output["mean"] if isinstance(output, dict) else output

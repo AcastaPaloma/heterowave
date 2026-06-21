@@ -104,7 +104,8 @@ def main(argv: list[str] | None = None):
     output = Path(args.output_dir or config.output.root)
     output.mkdir(parents=True, exist_ok=True)
     heterowave, heterowave_config, heterowave_provenance = load_trained_model(args.heterowave_checkpoint, device)
-    heterowave_label = f"heterowave_{heterowave_config.model.aggregation}"
+    heterowave_kind = "heterowave_v2" if heterowave_config.model.name == "heterowave_v2" else "heterowave"
+    heterowave_label = f"{heterowave_config.model.name}_{heterowave_config.model.aggregation}"
     models = [("fbp", "fbp", None)]
     checkpoint_provenance = []
     qualitative_unet = None
@@ -123,7 +124,7 @@ def main(argv: list[str] | None = None):
         checkpoint_provenance.append(masked_provenance)
         qualitative_unet = masked_unet
         qualitative_unet_label = "Masked FBP + U-Net"
-    models.append(("heterowave", heterowave_label, heterowave))
+    models.append((heterowave_kind, heterowave_label, heterowave))
     checkpoint_provenance.append(heterowave_provenance)
     rows = []
     for scenario, mask in masks.items():
@@ -148,6 +149,7 @@ def main(argv: list[str] | None = None):
         masks=masks,
         unet=qualitative_unet,
         unet_label=qualitative_unet_label,
+        heterowave_kind=heterowave_kind,
         heterowave=heterowave,
         device=device,
         path=output / "qualitative_grid.png",

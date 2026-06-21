@@ -101,9 +101,12 @@ class UncertaintyMetricAccumulator:
             raise ValueError("At least four uncertainty values are required")
         variance = torch.cat(self.variances)
         error = torch.cat(self.errors)
-        variance_rank = variance.argsort().argsort().float()
-        error_rank = error.argsort().argsort().float()
-        correlation = torch.corrcoef(torch.stack((variance_rank, error_rank)))[0, 1]
+        variance_rank = self._average_ranks(variance)
+        error_rank = self._average_ranks(error)
+        if variance_rank.std() == 0 or error_rank.std() == 0:
+            correlation = torch.tensor(0.0)
+        else:
+            correlation = torch.corrcoef(torch.stack((variance_rank, error_rank)))[0, 1]
         order = variance.argsort()
         quartile = max(1, len(order) // 4)
         low_error = error[order[:quartile]].mean()
@@ -114,6 +117,19 @@ class UncertaintyMetricAccumulator:
             "uncertainty_high_quartile_mae": float(high_error),
             "uncertainty_error_ratio": float(high_error / low_error.clamp_min(1e-12)),
         }
+
+    @staticmethod
+    def _average_ranks(values: Tensor) -> Tensor:
+        """Return zero-based average ranks with correct handling of ties."""
+        sorted_values, order = values.sort()
+        _, counts = torch.unique_consecutive(sorted_values, return_counts=True)
+        ends = counts.cumsum(0)
+        starts = ends - counts
+        group_ranks = (starts + ends - 1).float() / 2
+        sorted_ranks = torch.repeat_interleave(group_ranks, counts)
+        ranks = torch.empty_like(sorted_ranks)
+        ranks[order] = sorted_ranks
+        return ranks
 
 
 def reconstruction_metrics(prediction: Tensor, target: Tensor) -> dict[str, float]:
