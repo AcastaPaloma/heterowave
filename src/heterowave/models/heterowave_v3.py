@@ -71,7 +71,7 @@ class MaskGeometryEncoder(nn.Module):
 
 
 class MaskedSectorAttention(nn.Module):
-    """Permutation-invariant sector fusion with learned spatial precision maps."""
+    """Permutation-invariant sector fusion with tempered spatial precision maps."""
 
     def __init__(
         self,
@@ -79,11 +79,17 @@ class MaskedSectorAttention(nn.Module):
         *,
         aggregation: AggregationMode = "mean_var_count",
         include_statistics: bool = True,
+        precision_temperature: float = 0.5,
+        precision_max: float = 10.0,
     ) -> None:
         super().__init__()
+        if precision_temperature <= 0 or precision_max <= 0:
+            raise ValueError("precision_temperature and precision_max must be positive")
         hidden = max(channels // 4, 1)
         self.include_statistics = include_statistics
         self.min_precision = 1e-4
+        self.precision_temperature = float(precision_temperature)
+        self.precision_max = float(precision_max)
         self.precision = nn.Sequential(
             nn.Conv2d(channels, hidden, 1),
             nn.GELU(),
@@ -101,6 +107,7 @@ class MaskedSectorAttention(nn.Module):
         flat = features.reshape(batch * sectors, channels, height, width)
         logits = self.precision(flat).reshape(batch, sectors, 1, height, width)
         precision = F.softplus(logits) + self.min_precision
+        precision = precision.clamp(max=self.precision_max).pow(self.precision_temperature)
         precision = precision * mask.view(batch, sectors, 1, 1, 1).to(precision)
         total_precision = precision.sum(dim=1).clamp_min(self.min_precision)
         weights = precision / total_precision.unsqueeze(1)
@@ -147,6 +154,8 @@ class HeteroWaveV3(nn.Module):
         mask_film: bool = True,
         mask_fourier_bands: int = 4,
         mask_embedding_dim: int = 64,
+        precision_temperature: float = 0.5,
+        precision_max: float = 10.0,
         fusion_gate_init: float = 0.0,
         align_corners: bool = False,
     ) -> None:
@@ -196,6 +205,8 @@ class HeteroWaveV3(nn.Module):
                     width,
                     aggregation=aggregation,
                     include_statistics=sector_statistics,
+                    precision_temperature=precision_temperature,
+                    precision_max=precision_max,
                 )
                 for width in widths
             )

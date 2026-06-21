@@ -931,3 +931,32 @@ breadcrumbs when explaining design decisions.
 - A future "v4" should probably be dual-domain or unrolled, not just more
   attention.
 - Keep this file current.
+
+## Branch experiment: tempered precision pooling
+
+Branch: `experiment/tempered-precision-pooling`.
+
+Status: implemented as a trainable branch, not yet benchmarked.
+
+Purpose:
+
+- keep v3's learned positive sector precision maps;
+- cap and temper precision before normalization to avoid overconfident
+  Product-of-Experts behavior from correlated angular sectors;
+- expose `model.precision_temperature` and `model.precision_max` in config.
+
+Colab train command:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_heterowave_tempered_precision.yaml \
+  --initialize-from /content/drive/MyDrive/heterowave/results/heterowave_v2_fusion/best.pt
+```
+
+Local smoke:
+
+```bash
+python -m heterowave.train \
+  --config configs/local_heterowave_tempered_precision_smoke.yaml \
+  device=cpu
+```

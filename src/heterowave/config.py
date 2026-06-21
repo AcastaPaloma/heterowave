@@ -52,6 +52,8 @@ class ModelConfig:
     mask_film: bool = True
     mask_fourier_bands: int = 4
     mask_embedding_dim: int = 64
+    precision_temperature: float = 0.5
+    precision_max: float = 10.0
     fusion_gate_init: float = 0.0
     freeze_global_trunk: bool = False
 
@@ -162,6 +164,8 @@ class ProjectConfig:
             raise ValueError("model.angle_fourier_bands must be nonnegative")
         if self.model.mask_fourier_bands < 0 or self.model.mask_embedding_dim < 1:
             raise ValueError("model mask-geometry settings are invalid")
+        if self.model.precision_temperature <= 0 or self.model.precision_max <= 0:
+            raise ValueError("model precision_temperature and precision_max must be positive")
         if min(
             self.acquisition.noise_std,
             self.acquisition.gain_std,

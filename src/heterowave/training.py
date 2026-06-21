@@ -119,6 +119,8 @@ def build_model(config: ProjectConfig) -> nn.Module:
             mask_film=config.model.mask_film,
             mask_fourier_bands=config.model.mask_fourier_bands,
             mask_embedding_dim=config.model.mask_embedding_dim,
+            precision_temperature=config.model.precision_temperature,
+            precision_max=config.model.precision_max,
             fusion_gate_init=config.model.fusion_gate_init,
             align_corners=config.physics.align_corners,
         )
