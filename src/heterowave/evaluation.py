@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader
 from .baselines import fbp_normalized_speed, fbp_unet_features
 from .config import ProjectConfig, project_config_from_dict
 from .data.masks import load_validation_masks, sector_mask_to_angle_mask
-from .metrics import ReconstructionMetricAccumulator
+from .metrics import ReconstructionMetricAccumulator, UncertaintyMetricAccumulator
 from .physics import parallel_beam_project
 from .training import build_model
 
@@ -61,7 +61,9 @@ def predict_with_mask(
     sinogram: Tensor,
     sector_mask: Tensor,
     metadata: dict[str, Any],
-) -> Tensor:
+    *,
+    return_distribution: bool = False,
+) -> Tensor | dict[str, Tensor]:
     angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1]).to(sinogram.device)
     if kind == "fbp":
         return fbp_normalized_speed(sinogram, metadata, angle_mask=angle_mask)
@@ -70,6 +72,8 @@ def predict_with_mask(
     if kind == "unet":
         return model(fbp_unet_features(sinogram, metadata, angle_mask=angle_mask))
     output = model(sinogram, sector_mask)
+    if return_distribution and isinstance(output, dict):
+        return output
     return output["mean"] if isinstance(output, dict) else output
 
 
@@ -106,6 +110,8 @@ def evaluate_scenario(
     max_samples: int | None = None,
 ) -> dict[str, Any]:
     metrics = ReconstructionMetricAccumulator()
+    uncertainty_metrics = UncertaintyMetricAccumulator()
+    has_uncertainty = False
     residual_sum = 0.0
     residual_count = 0
     inference_seconds = 0.0
@@ -122,7 +128,15 @@ def evaluate_scenario(
         if device.type == "cuda":
             torch.cuda.synchronize(device)
         started = time.perf_counter()
-        prediction = predict_with_mask(kind, model, sinogram, batch_mask, metadata)
+        raw_prediction = predict_with_mask(
+            kind, model, sinogram, batch_mask, metadata, return_distribution=True
+        )
+        if isinstance(raw_prediction, dict):
+            prediction = raw_prediction["mean"]
+            uncertainty_metrics.update(raw_prediction["log_variance"], prediction, target)
+            has_uncertainty = True
+        else:
+            prediction = raw_prediction
         if device.type == "cuda":
             torch.cuda.synchronize(device)
         inference_seconds += time.perf_counter() - started
@@ -132,7 +146,7 @@ def evaluate_scenario(
         residual_count += batch_count
         processed += len(target)
     values = metrics.compute()
-    return {
+    result = {
         "model": label,
         "scenario": scenario,
         "observed_sectors": int(mask.sum()),
@@ -145,6 +159,9 @@ def evaluate_scenario(
             torch.cuda.max_memory_allocated(device) / 1024**2 if device.type == "cuda" else 0.0
         ),
     }
+    if has_uncertainty:
+        result.update(uncertainty_metrics.compute())
+    return result
 
 
 def write_metrics_csv(rows: list[dict[str, Any]], path: str | Path) -> Path:

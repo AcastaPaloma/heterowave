@@ -1,32 +1,32 @@
 seed: 1337
 device: cuda
-precision: auto
+precision: fp32
 compile: false
 
 data:
-  dataset: cached
-  root: /content/heterowave_data/cache_128
-  image_size: 128
-  batch_size: 4
-  num_workers: 2
-  pin_memory: true
-  persistent_workers: true
-  train_samples: 16
-  val_samples: 8
+  dataset: synthetic
+  root: null
+  image_size: 32
+  batch_size: 2
+  num_workers: 0
+  pin_memory: false
+  persistent_workers: false
+  train_samples: 8
+  val_samples: 4
   preprocess: false
 
 physics:
-  num_angles: 64
-  detector_bins: 128
+  num_angles: 16
+  detector_bins: 32
   num_sectors: 16
   align_corners: false
 
 visualization:
-  output: outputs/phase7_colab.png
+  output: outputs/phase7_smoke.png
 
 model:
   name: heterowave
-  channels: [16, 32, 64, 96]
+  channels: [4, 8]
   residual_output: false
   aggregation: mean_var_count
   geometry_channels: true
@@ -41,20 +41,20 @@ masking:
 
 optimizer:
   name: adamw
-  learning_rate: 0.0003
+  learning_rate: 0.001
   weight_decay: 0.0001
 
 loss:
   image_weight: 1.0
   gradient_weight: 0.1
   data_weight: 0.05
-  data_every_n_steps: 4
+  data_every_n_steps: 2
   data_angle_fraction: 0.5
   uncertainty_weight: 0.1
 
 training:
-  epochs: 15
-  max_steps: null
+  epochs: 10
+  max_steps: 4
   gradient_clip: 1.0
   validate_every_epochs: 1
   checkpoint_metric: nrmse
@@ -62,4 +62,4 @@ training:
   resume: null
 
 output:
-  root: /content/drive/MyDrive/heterowave/results/heterowave_phase7
+  root: outputs/phase7_smoke

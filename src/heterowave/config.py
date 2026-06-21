@@ -67,6 +67,10 @@ class OptimizerConfig:
 class LossConfig:
     image_weight: float = 1.0
     gradient_weight: float = 0.1
+    data_weight: float = 0.0
+    data_every_n_steps: int = 4
+    data_angle_fraction: float = 0.5
+    uncertainty_weight: float = 0.0
 
 
 @dataclass
@@ -147,8 +151,21 @@ class ProjectConfig:
             raise ValueError("mask probabilities must be nonnegative and sum to one")
         if self.optimizer.name != "adamw" or self.optimizer.learning_rate <= 0 or self.optimizer.weight_decay < 0:
             raise ValueError("Phase 4 supports AdamW with a positive learning rate")
-        if min(self.loss.image_weight, self.loss.gradient_weight) < 0:
+        if min(
+            self.loss.image_weight,
+            self.loss.gradient_weight,
+            self.loss.data_weight,
+            self.loss.uncertainty_weight,
+        ) < 0:
             raise ValueError("loss weights must be nonnegative")
+        if self.loss.data_every_n_steps < 1:
+            raise ValueError("loss.data_every_n_steps must be positive")
+        if not 0 < self.loss.data_angle_fraction <= 1:
+            raise ValueError("loss.data_angle_fraction must be within (0,1]")
+        if self.loss.uncertainty_weight > 0 and not self.model.uncertainty:
+            raise ValueError("model.uncertainty must be enabled when uncertainty_weight is positive")
+        if self.model.uncertainty and self.model.name not in {"heterowave", "heterowave_v2"}:
+            raise ValueError("uncertainty is supported by HeteroWave models")
         if self.training.epochs < 1 or self.training.validate_every_epochs < 1:
             raise ValueError("training epochs and validation interval must be positive")
         if self.training.max_steps is not None and self.training.max_steps < 1:

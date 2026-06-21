@@ -22,7 +22,7 @@ physics:
   align_corners: false
 
 visualization:
-  output: outputs/phase7_colab.png
+  output: outputs/phase7_physics.png
 
 model:
   name: heterowave
@@ -30,7 +30,7 @@ model:
   residual_output: false
   aggregation: mean_var_count
   geometry_channels: true
-  uncertainty: true
+  uncertainty: false
 
 masking:
   minimum_sectors: 2
@@ -41,7 +41,7 @@ masking:
 
 optimizer:
   name: adamw
-  learning_rate: 0.0003
+  learning_rate: 0.0001
   weight_decay: 0.0001
 
 loss:
@@ -50,10 +50,10 @@ loss:
   data_weight: 0.05
   data_every_n_steps: 4
   data_angle_fraction: 0.5
-  uncertainty_weight: 0.1
+  uncertainty_weight: 0.0
 
 training:
-  epochs: 15
+  epochs: 10
   max_steps: null
   gradient_clip: 1.0
   validate_every_epochs: 1
@@ -62,4 +62,4 @@ training:
   resume: null
 
 output:
-  root: /content/drive/MyDrive/heterowave/results/heterowave_phase7
+  root: /content/drive/MyDrive/heterowave/results/heterowave_phase7_physics

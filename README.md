@@ -169,6 +169,32 @@ qualitative grid, architecture diagram, configuration, checkpoint provenance,
 and a copy of the selected HeteroWave checkpoint. Use `--split test` only for
 the final frozen evaluation. `--max-samples N` is available for smoke tests.
 
+## Phase 7 physics consistency and uncertainty
+
+Phase 7 adds a normalized observed-angle projection loss and heteroscedastic
+Gaussian uncertainty. Warm-starting loads the v1 mean predictor while leaving
+the optimizer and fine-tuning epoch count fresh.
+
+Run the physics-only ablation first:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_phase7_physics.yaml \
+  --initialize-from /content/drive/MyDrive/heterowave/results/heterowave_mean_var_count/best.pt
+```
+
+Then train the combined physics and uncertainty model:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_full.yaml \
+  --initialize-from /content/drive/MyDrive/heterowave/results/heterowave_mean_var_count/best.pt
+```
+
+Use `--resume .../last.pt` after a disconnect; do not combine `--resume` with
+`--initialize-from`. Evaluation reports uncertainty/error Spearman correlation
+and high-versus-low uncertainty quartile error in addition to Phase 6 metrics.
+
 The local configuration is deliberately tiny and uses FP32, `num_workers: 0`,
 and `torch.compile: false`. It generates synthetic data in memory and performs
 no dataset download or preprocessing.

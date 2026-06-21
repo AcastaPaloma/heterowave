@@ -18,7 +18,7 @@ from .data import (
     sample_sector_masks,
     sector_mask_to_angle_mask,
 )
-from .metrics import ReconstructionMetricAccumulator
+from .metrics import ReconstructionMetricAccumulator, UncertaintyMetricAccumulator
 from .models import FBPUNet, HeteroWave
 
 
@@ -99,11 +99,17 @@ def training_prediction(
     metadata: dict[str, Any],
     config: ProjectConfig,
     mask_generator: torch.Generator,
-) -> torch.Tensor:
+    *,
+    return_aux: bool = False,
+) -> torch.Tensor | dict[str, torch.Tensor] | tuple[torch.Tensor | dict[str, torch.Tensor], torch.Tensor]:
     if config.model.name == "fbp_unet":
         with torch.no_grad(), torch.autocast(device_type=sinogram.device.type, enabled=False):
             features = fbp_unet_features(sinogram.float(), metadata)
-        return model(features)
+        output = model(features)
+        mask = torch.ones(
+            (len(sinogram), config.physics.num_sectors), device=sinogram.device, dtype=torch.bool
+        )
+        return (output, mask) if return_aux else output
     sector_mask = sample_sector_masks(
         len(sinogram),
         num_sectors=config.physics.num_sectors,
@@ -117,8 +123,11 @@ def training_prediction(
         angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1])
         with torch.no_grad(), torch.autocast(device_type=sinogram.device.type, enabled=False):
             features = fbp_unet_features(sinogram.float(), metadata, angle_mask=angle_mask)
-        return model(features)
+        output = model(features)
+        return (output, sector_mask) if return_aux else output
     output = model(sinogram, sector_mask)
+    if return_aux:
+        return output, sector_mask
     return output["mean"] if isinstance(output, dict) else output
 
 
@@ -141,6 +150,7 @@ def validate(
 ) -> dict[str, float]:
     model.eval()
     metrics = ReconstructionMetricAccumulator()
+    uncertainty_metrics = UncertaintyMetricAccumulator() if config.model.uncertainty else None
     fixed_masks = _validation_masks(config) if config.model.name != "fbp_unet" else []
     sample_offset = 0
     for batch in loader:
@@ -158,6 +168,13 @@ def validate(
             else:
                 output = model(sinogram, sector_mask)
                 prediction = output["mean"] if isinstance(output, dict) else output
+                if uncertainty_metrics is not None:
+                    if not isinstance(output, dict):
+                        raise ValueError("Uncertainty model must return a distribution")
+                    uncertainty_metrics.update(output["log_variance"], prediction, target)
             sample_offset += len(sinogram)
         metrics.update(prediction, target)
-    return metrics.compute()
+    values = metrics.compute()
+    if uncertainty_metrics is not None:
+        values.update(uncertainty_metrics.compute())
+    return values

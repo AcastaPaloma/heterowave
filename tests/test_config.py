@@ -8,6 +8,7 @@ from heterowave.config import load_config
 CONFIG = Path(__file__).parents[1] / "configs" / "local_smoke.yaml"
 HETEROWAVE_CONFIG = Path(__file__).parents[1] / "configs" / "local_heterowave_smoke.yaml"
 MASKED_UNET_CONFIG = Path(__file__).parents[1] / "configs" / "local_masked_unet_smoke.yaml"
+PHASE7_CONFIG = Path(__file__).parents[1] / "configs" / "local_phase7_smoke.yaml"
 
 
 def test_local_config_is_safe_and_tiny():
@@ -41,3 +42,12 @@ def test_masked_unet_config_matches_heterowave_mask_protocol():
     assert baseline.seed == heterowave.seed == 1337
     assert baseline.physics.num_sectors == heterowave.physics.num_sectors
     assert baseline.masking == heterowave.masking
+
+
+def test_phase7_config_enables_physics_and_uncertainty():
+    config = load_config(PHASE7_CONFIG)
+    assert config.model.uncertainty is True
+    assert config.loss.data_weight == pytest.approx(0.05)
+    assert config.loss.data_every_n_steps == 2
+    assert config.loss.data_angle_fraction == pytest.approx(0.5)
+    assert config.loss.uncertainty_weight == pytest.approx(0.1)

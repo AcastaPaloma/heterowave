@@ -5,7 +5,8 @@ import heterowave.training as training
 from heterowave.baselines import fbp_normalized_speed, fbp_unet_features
 from heterowave.config import load_config
 from heterowave.data import SyntheticReconstructionDataset
-from heterowave.losses import reconstruction_loss
+from heterowave.losses import observed_data_consistency_loss, reconstruction_loss
+from heterowave.metrics import UncertaintyMetricAccumulator
 from heterowave.models import FBPUNet
 from heterowave.training import resolve_device, training_prediction
 
@@ -80,6 +81,41 @@ def test_masked_unet_training_builds_mask_aware_fbp_features(monkeypatch):
     assert model.features.shape == (2, 3, 32, 32)
     torch.testing.assert_close(model.features[:, 2], torch.full_like(model.features[:, 2], 0.5))
     assert torch.isfinite(model.features).all()
+
+
+def test_data_consistency_loss_has_finite_gradient_and_decreases():
+    target, sinogram, metadata = _batch(count=1, size=16, angles=8)
+    prediction = nn.Parameter(target + 0.25 * torch.randn_like(target))
+    mask = torch.ones(1, 8, dtype=torch.bool)
+    optimizer = torch.optim.Adam([prediction], lr=0.03)
+    initial = observed_data_consistency_loss(prediction, sinogram, mask, metadata)
+    for _ in range(20):
+        loss = observed_data_consistency_loss(prediction, sinogram, mask, metadata)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+    final = observed_data_consistency_loss(prediction, sinogram, mask, metadata)
+    assert torch.isfinite(prediction.grad).all()
+    assert final < initial
+
+
+def test_uncertainty_nll_and_metrics_track_absolute_error():
+    target = torch.zeros(1, 1, 2, 2)
+    prediction = torch.tensor([[[[0.01, 0.1], [0.5, 1.0]]]])
+    log_variance = (prediction.abs().square() + 1e-4).log()
+    loss, parts = reconstruction_loss(
+        prediction,
+        target,
+        log_variance=log_variance,
+        uncertainty_weight=0.1,
+    )
+    metrics = UncertaintyMetricAccumulator()
+    metrics.update(log_variance, prediction, target)
+    values = metrics.compute()
+    assert torch.isfinite(loss)
+    assert torch.isfinite(parts["uncertainty_nll"])
+    assert values["uncertainty_spearman"] > 0.9
+    assert values["uncertainty_error_ratio"] > 1
 
 
 def test_resolve_device_uses_available_cuda_without_arch_list_filter(monkeypatch):

@@ -11,7 +11,7 @@ from pathlib import Path
 import torch
 
 from .config import load_config
-from .losses import reconstruction_loss
+from .losses import observed_data_consistency_loss, reconstruction_loss
 from .training import build_model, create_loaders, resolve_device, training_prediction, validate
 
 
@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> Path:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/local_smoke.yaml")
     parser.add_argument("--resume")
+    parser.add_argument("--initialize-from", help="Warm-start model weights without optimizer or epoch state")
     parser.add_argument("overrides", nargs="*")
     args = parser.parse_args(argv)
     config = load_config(args.config, args.overrides)
@@ -35,6 +36,29 @@ def main(argv: list[str] | None = None) -> Path:
 
     train_loader, validation_loader, metadata = create_loaders(config)
     model = build_model(config).to(device)
+    if args.resume and args.initialize_from:
+        parser.error("--resume and --initialize-from are mutually exclusive")
+    if args.initialize_from:
+        checkpoint = torch.load(args.initialize_from, map_location=device, weights_only=False)
+        source = checkpoint["model"]
+        target = model.state_dict()
+        loaded, adapted, skipped = [], [], []
+        for name, value in source.items():
+            if name not in target:
+                skipped.append(name)
+            elif target[name].shape == value.shape:
+                target[name] = value
+                loaded.append(name)
+            elif name in {"output.weight", "output.bias"} and value.shape[0] == 1 and target[name].shape[0] == 2:
+                target[name][0].copy_(value[0])
+                adapted.append(name)
+            else:
+                skipped.append(name)
+        model.load_state_dict(target)
+        print(
+            f"initialized={args.initialize_from} loaded={len(loaded)} "
+            f"adapted={len(adapted)} skipped={len(skipped)}"
+        )
     if config.compile:
         model = torch.compile(model)
     optimizer = torch.optim.AdamW(
@@ -44,6 +68,8 @@ def main(argv: list[str] | None = None) -> Path:
     output.mkdir(parents=True, exist_ok=True)
     (output / "config.json").write_text(json.dumps(asdict(config), indent=2) + "\n", encoding="utf-8")
 
+    mask_generator = torch.Generator().manual_seed(config.seed)
+    physics_generator = torch.Generator().manual_seed(config.seed + 2)
     start_epoch, global_step, best_nrmse = 0, 0, float("inf")
     resume_path = args.resume or config.training.resume
     if resume_path:
@@ -53,13 +79,16 @@ def main(argv: list[str] | None = None) -> Path:
         start_epoch = int(checkpoint["epoch"]) + 1
         global_step = int(checkpoint["global_step"])
         best_nrmse = float(checkpoint["best_nrmse"])
+        if "mask_generator_state" in checkpoint:
+            mask_generator.set_state(checkpoint["mask_generator_state"])
+        if "physics_generator_state" in checkpoint:
+            physics_generator.set_state(checkpoint["physics_generator_state"])
         print(f"resumed={resume_path} step={global_step}")
 
     use_fp16 = device.type == "cuda" and config.precision in {"fp16", "auto"} and not torch.cuda.is_bf16_supported()
     use_bf16 = device.type == "cuda" and config.precision in {"bf16", "auto"} and torch.cuda.is_bf16_supported()
     amp_dtype = torch.bfloat16 if use_bf16 else torch.float16
     scaler = torch.amp.GradScaler("cuda", enabled=use_fp16)
-    mask_generator = torch.Generator().manual_seed(config.seed)
     stop = False
     for epoch in range(start_epoch, config.training.epochs):
         model.train()
@@ -68,13 +97,38 @@ def main(argv: list[str] | None = None) -> Path:
             sinogram = batch["sinogram"].to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_fp16 or use_bf16):
-                prediction = training_prediction(model, sinogram, metadata, config, mask_generator)
+                raw_output, sector_mask = training_prediction(
+                    model, sinogram, metadata, config, mask_generator, return_aux=True
+                )
+                if isinstance(raw_output, dict):
+                    prediction = raw_output["mean"]
+                    log_variance = raw_output["log_variance"]
+                else:
+                    prediction, log_variance = raw_output, None
                 loss, parts = reconstruction_loss(
                     prediction,
                     target,
                     image_weight=config.loss.image_weight,
                     gradient_weight=config.loss.gradient_weight,
+                    log_variance=log_variance,
+                    uncertainty_weight=config.loss.uncertainty_weight,
                 )
+                compute_data_loss = (
+                    config.loss.data_weight > 0
+                    and (global_step + 1) % config.loss.data_every_n_steps == 0
+                )
+                if compute_data_loss:
+                    data_loss = observed_data_consistency_loss(
+                        prediction,
+                        sinogram,
+                        sector_mask,
+                        metadata,
+                        angle_fraction=config.loss.data_angle_fraction,
+                        generator=physics_generator,
+                    )
+                    loss = loss + config.loss.data_weight * data_loss
+                    parts["data_loss"] = data_loss.detach()
+                    parts["loss"] = loss.detach()
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.training.gradient_clip)
@@ -85,6 +139,12 @@ def main(argv: list[str] | None = None) -> Path:
                 print(
                     f"epoch={epoch + 1} step={global_step} loss={float(parts['loss']):.6f} "
                     f"image={float(parts['image_loss']):.6f} gradient={float(parts['gradient_loss']):.6f}"
+                    + (f" data={float(parts['data_loss']):.6f}" if "data_loss" in parts else "")
+                    + (
+                        f" uncertainty={float(parts['uncertainty_nll']):.6f}"
+                        if "uncertainty_nll" in parts
+                        else ""
+                    )
                 )
             if config.training.max_steps is not None and global_step >= config.training.max_steps:
                 stop = True
@@ -101,6 +161,8 @@ def main(argv: list[str] | None = None) -> Path:
                 "best_nrmse": min(best_nrmse, values["nrmse"]),
                 "metadata": metadata,
                 "config": asdict(config),
+                "mask_generator_state": mask_generator.get_state(),
+                "physics_generator_state": physics_generator.get_state(),
             }
             _atomic_checkpoint(output / "last.pt", state)
             if values["nrmse"] < best_nrmse:

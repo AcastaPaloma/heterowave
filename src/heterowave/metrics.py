@@ -72,6 +72,50 @@ class ReconstructionMetricAccumulator:
         }
 
 
+class UncertaintyMetricAccumulator:
+    """Bounded-memory pixelwise uncertainty/error association metrics."""
+
+    def __init__(self, max_values: int = 200_000) -> None:
+        self.max_values = max_values
+        self.variances: list[Tensor] = []
+        self.errors: list[Tensor] = []
+        self.count = 0
+
+    def update(self, log_variance: Tensor, prediction: Tensor, target: Tensor) -> None:
+        if log_variance.shape != prediction.shape or prediction.shape != target.shape:
+            raise ValueError("uncertainty, prediction, and target shapes must match")
+        variance = log_variance.detach().float().exp().flatten().cpu()
+        error = (prediction.detach().float() - target.detach().float()).abs().flatten().cpu()
+        remaining = self.max_values - self.count
+        if remaining <= 0:
+            return
+        if len(variance) > remaining:
+            indices = torch.linspace(0, len(variance) - 1, remaining).long()
+            variance, error = variance[indices], error[indices]
+        self.variances.append(variance)
+        self.errors.append(error)
+        self.count += len(variance)
+
+    def compute(self) -> dict[str, float]:
+        if self.count < 4:
+            raise ValueError("At least four uncertainty values are required")
+        variance = torch.cat(self.variances)
+        error = torch.cat(self.errors)
+        variance_rank = variance.argsort().argsort().float()
+        error_rank = error.argsort().argsort().float()
+        correlation = torch.corrcoef(torch.stack((variance_rank, error_rank)))[0, 1]
+        order = variance.argsort()
+        quartile = max(1, len(order) // 4)
+        low_error = error[order[:quartile]].mean()
+        high_error = error[order[-quartile:]].mean()
+        return {
+            "uncertainty_spearman": float(correlation),
+            "uncertainty_low_quartile_mae": float(low_error),
+            "uncertainty_high_quartile_mae": float(high_error),
+            "uncertainty_error_ratio": float(high_error / low_error.clamp_min(1e-12)),
+        }
+
+
 def reconstruction_metrics(prediction: Tensor, target: Tensor) -> dict[str, float]:
     if prediction.shape != target.shape:
         raise ValueError("prediction and target shapes must match")
