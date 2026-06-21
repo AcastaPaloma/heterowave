@@ -28,6 +28,7 @@ class DataConfig:
 class PhysicsConfig:
     num_angles: int = 16
     detector_bins: int | None = None
+    num_sectors: int = 16
     align_corners: bool = False
 
 
@@ -41,6 +42,18 @@ class ModelConfig:
     name: str = "fbp_unet"
     channels: list[int] = field(default_factory=lambda: [16, 32, 64, 96])
     residual_output: bool = True
+    aggregation: str = "mean_var_count"
+    geometry_channels: bool = True
+    uncertainty: bool = False
+
+
+@dataclass
+class MaskingConfig:
+    minimum_sectors: int = 2
+    random_probability: float = 0.50
+    wedge_probability: float = 0.35
+    periodic_probability: float = 0.15
+    validation_masks: str | None = None
 
 
 @dataclass
@@ -82,6 +95,7 @@ class ProjectConfig:
     physics: PhysicsConfig = field(default_factory=PhysicsConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
+    masking: MaskingConfig = field(default_factory=MaskingConfig)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     loss: LossConfig = field(default_factory=LossConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
@@ -96,6 +110,10 @@ class ProjectConfig:
             raise ValueError("data.root is required for dataset='cached'")
         if self.data.image_size < 8 or self.physics.num_angles < 1:
             raise ValueError("image_size must be >= 8 and num_angles must be positive")
+        if self.physics.num_sectors < 1:
+            raise ValueError("num_sectors must be positive")
+        if self.model.name == "heterowave" and self.physics.num_angles % self.physics.num_sectors != 0:
+            raise ValueError("HeteroWave requires num_sectors to divide num_angles")
         if self.data.batch_size < 1 or self.data.train_samples < 1 or self.data.val_samples < 1:
             raise ValueError("batch size and synthetic split sizes must be positive")
         if self.physics.detector_bins is not None and self.physics.detector_bins < 2:
@@ -106,10 +124,25 @@ class ProjectConfig:
             raise ValueError("persistent_workers requires num_workers > 0")
         if self.data.preprocess:
             raise ValueError("Preprocessing must be run explicitly before training")
-        if self.model.name != "fbp_unet" or len(self.model.channels) < 2:
-            raise ValueError("Phase 4 supports model.name='fbp_unet' with at least two channel levels")
+        if self.model.name not in {"fbp_unet", "heterowave"} or len(self.model.channels) < 2:
+            raise ValueError("model.name must be fbp_unet or heterowave with at least two channel levels")
         if any(channel < 1 for channel in self.model.channels):
             raise ValueError("model channels must be positive")
+        if self.model.aggregation not in {"mean", "mean_var", "mean_var_count"}:
+            raise ValueError("Unsupported set aggregation mode")
+        if not 1 <= self.masking.minimum_sectors <= self.physics.num_sectors:
+            raise ValueError("minimum_sectors must be within the configured sector count")
+        probability_sum = (
+            self.masking.random_probability
+            + self.masking.wedge_probability
+            + self.masking.periodic_probability
+        )
+        if min(
+            self.masking.random_probability,
+            self.masking.wedge_probability,
+            self.masking.periodic_probability,
+        ) < 0 or abs(probability_sum - 1.0) > 1e-6:
+            raise ValueError("mask probabilities must be nonnegative and sum to one")
         if self.optimizer.name != "adamw" or self.optimizer.learning_rate <= 0 or self.optimizer.weight_decay < 0:
             raise ValueError("Phase 4 supports AdamW with a positive learning rate")
         if min(self.loss.image_weight, self.loss.gradient_weight) < 0:

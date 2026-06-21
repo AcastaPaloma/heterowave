@@ -83,6 +83,40 @@ python -m heterowave.train --config configs/colab_baseline.yaml \
 Phase 4 uses all cached angles. Missing-sector scenarios and acquisition
 masking are introduced in Phase 5.
 
+## Phase 5 HeteroWave
+
+The Phase 5 model trains with mixed random-sector, contiguous-wedge, and
+periodic masks. Fixed seed-1337 validation masks are stored in
+`configs/validation_masks_seed1337.json`.
+
+Run the tiny local smoke configuration:
+
+```bash
+python -m heterowave.train --config configs/local_heterowave_smoke.yaml
+```
+
+Train on the Colab-local cache while persisting checkpoints to Drive:
+
+```bash
+python -m heterowave.train --config configs/colab_heterowave.yaml
+```
+
+Resume after a runtime interruption:
+
+```bash
+python -m heterowave.train \
+  --config configs/colab_heterowave.yaml \
+  --resume /content/drive/MyDrive/heterowave/results/heterowave_mean_var_count/last.pt
+```
+
+Regenerate the committed fixed masks when the validation protocol changes:
+
+```bash
+python scripts/generate_validation_masks.py \
+  --output configs/validation_masks_seed1337.json \
+  --seed 1337
+```
+
 The local configuration is deliberately tiny and uses FP32, `num_workers: 0`,
 and `torch.compile: false`. It generates synthetic data in memory and performs
 no dataset download or preprocessing.

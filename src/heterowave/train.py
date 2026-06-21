@@ -1,4 +1,4 @@
-"""Train the Phase 4 fixed-input FBP + U-Net baseline."""
+"""Train configured Phase 4 or Phase 5 reconstruction models."""
 
 from __future__ import annotations
 
@@ -10,11 +10,9 @@ from pathlib import Path
 
 import torch
 
-from .baselines import fbp_unet_features
 from .config import load_config
 from .losses import reconstruction_loss
-from .models import FBPUNet
-from .training import create_loaders, resolve_device, validate
+from .training import build_model, create_loaders, resolve_device, training_prediction, validate
 
 
 def _atomic_checkpoint(path: Path, value: dict) -> None:
@@ -36,9 +34,7 @@ def main(argv: list[str] | None = None) -> Path:
         torch.cuda.manual_seed_all(config.seed)
 
     train_loader, validation_loader, metadata = create_loaders(config)
-    model = FBPUNet(
-        channels=config.model.channels, residual_output=config.model.residual_output
-    ).to(device)
+    model = build_model(config).to(device)
     if config.compile:
         model = torch.compile(model)
     optimizer = torch.optim.AdamW(
@@ -63,17 +59,16 @@ def main(argv: list[str] | None = None) -> Path:
     use_bf16 = device.type == "cuda" and config.precision in {"bf16", "auto"} and torch.cuda.is_bf16_supported()
     amp_dtype = torch.bfloat16 if use_bf16 else torch.float16
     scaler = torch.amp.GradScaler("cuda", enabled=use_fp16)
+    mask_generator = torch.Generator().manual_seed(config.seed)
     stop = False
     for epoch in range(start_epoch, config.training.epochs):
         model.train()
         for batch in train_loader:
             target = batch["target"].to(device, non_blocking=True)
             sinogram = batch["sinogram"].to(device, non_blocking=True)
-            with torch.no_grad():
-                features = fbp_unet_features(sinogram, metadata)
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_fp16 or use_bf16):
-                prediction = model(features)
+                prediction = training_prediction(model, sinogram, metadata, config, mask_generator)
                 loss, parts = reconstruction_loss(
                     prediction,
                     target,
@@ -96,7 +91,7 @@ def main(argv: list[str] | None = None) -> Path:
                 break
 
         if (epoch + 1) % config.training.validate_every_epochs == 0 or stop:
-            values = validate(model, validation_loader, metadata, device)
+            values = validate(model, validation_loader, metadata, device, config)
             print("validation=" + json.dumps(values, sort_keys=True))
             state = {
                 "model": model.state_dict(),
