@@ -52,7 +52,9 @@ Repo-local README figures:
 
 - `docs/assets/workflow_overview.gif`
 - `docs/assets/model_average_nrmse.png`
-- `docs/assets/scenario_test_nrmse.png`
+- `docs/assets/scenario_test_nrmse.png` as an improvement-over-baseline bar
+  chart, not a raw line plot. This avoids visually overlapping the very close
+  per-scenario NRMSE values and makes the distributed sparse-view gains clearer.
 
 Curated public-summary Drive folder:
 
