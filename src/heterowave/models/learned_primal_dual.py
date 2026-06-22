@@ -77,17 +77,23 @@ class LearnedPrimalDual(nn.Module):
         metadata: dict[str, Any],
     ) -> Tensor:
         with torch.autocast(device_type=x.device.type, enabled=False):
+            angles = torch.arange(
+                int(metadata["num_angles"]),
+                device=x.device,
+                dtype=torch.float32,
+            ) * (torch.pi / int(metadata["num_angles"]))
             speed = x.float() * float(metadata["speed_std"]) + float(metadata["speed_mean"])
             slowness_contrast = speed.clamp_min(1.0).reciprocal() - (1.0 / float(metadata["water_speed"]))
             projection = parallel_beam_project(
                 slowness_contrast,
-                num_angles=int(metadata["num_angles"]),
+                angles=angles,
                 detector_bins=int(metadata["detector_bins"]),
                 align_corners=bool(metadata.get("align_corners", False)),
             )
-            residual = (projection - sinogram.float()) * angle_mask.unsqueeze(-1).to(projection)
+            residual = (projection - sinogram.float()) * angle_mask.unsqueeze(-1).to(dtype=torch.float32)
             residual_bp = unfiltered_backprojection(
-                residual,
+                residual.float(),
+                angles=angles,
                 output_size=self.image_size,
                 align_corners=self.align_corners,
             )
@@ -104,8 +110,9 @@ class LearnedPrimalDual(nn.Module):
             raise ValueError("sinogram must have shape [B,A,D]")
         sector_mask = validate_sector_mask(sector_mask, num_sectors=self.num_sectors).to(sinogram.device)
         angle_mask = sector_mask_to_angle_mask(sector_mask, sinogram.shape[1]).to(sinogram.device)
-        fbp = fbp_normalized_speed(sinogram, metadata, angle_mask=angle_mask)
-        features = fbp_unet_features(sinogram, metadata, angle_mask=angle_mask)
+        with torch.no_grad(), torch.autocast(device_type=sinogram.device.type, enabled=False):
+            fbp = fbp_normalized_speed(sinogram.float(), metadata, angle_mask=angle_mask)
+            features = fbp_unet_features(sinogram.float(), metadata, angle_mask=angle_mask)
         coverage = features[:, 1:2]
         observed_fraction = features[:, 2:3]
         x = fbp
