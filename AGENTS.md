@@ -41,9 +41,18 @@ When updating:
 
 Current branch at the time of this update: `main`.
 
-`README.md` on `main` has been rewritten as a polished public landing page. It
-is intentionally honest that `main` is a landing branch and the latest model
-implementations live on topic branches.
+`README.md` on `main` has been rewritten as the external-facing first-read
+document. It should stay concise, approachable, and objective: explain the
+medical/imaging context, the latent-sector architecture, the measured model
+comparisons, checkpoint/result locations, and the next wedge-focused research
+direction. It is intentionally honest that `main` is a landing branch and the
+latest model implementations live on topic branches.
+
+Repo-local README figures:
+
+- `docs/assets/workflow_overview.gif`
+- `docs/assets/model_average_nrmse.png`
+- `docs/assets/scenario_test_nrmse.png`
 
 Curated public-summary Drive folder:
 
@@ -65,6 +74,10 @@ Folder contents created on 2026-06-22:
 - `08_qualitative_grid_tempered_precision_test.png`
 - `09_workflow_overview.gif`:
   `https://drive.google.com/file/d/1704ZlvnHA83xGgpba7dvxegwt3PQ5dhZ/view?usp=drivesdk`
+- `10_model_average_nrmse.png`:
+  `https://drive.google.com/file/d/17G7-p85F3lPr3gau_8aD_edtW9nBREr3/view?usp=drivesdk`
+- `11_scenario_test_nrmse.png`:
+  `https://drive.google.com/file/d/1JPKcxDegDI7P6nNTiehWBwByuA3-B9Gl/view?usp=drivesdk`
 
 Important: the Google Drive connector could create/copy the folder and files,
 but it could not set true "anyone with the link" public sharing from this
